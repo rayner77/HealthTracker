@@ -28,6 +28,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.core.content.ContextCompat
 import com.inf2007.healthtracker.ui.theme.Primary
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material.icons.filled.Chat
 
 @Composable
 fun BottomNavigationBar(navController: NavController) {
@@ -83,6 +84,26 @@ fun BottomNavigationBar(navController: NavController) {
                 }
             },
             label = {Text("Meal Recs", style = MaterialTheme.typography.bodyMedium, color = Color.White) },
+            alwaysShowLabel = true
+        )
+
+        // 3. NEW SOCIAL ITEM ADDED HERE
+        BottomNavigationItem(
+            selected = currentRoute == "social_screen",
+            onClick = {
+                if (currentRoute != "social_screen") {
+                    navController.navigate("social_screen") {
+                        popUpTo("dashboard_screen") { inclusive = false }
+                    }
+                }
+            },
+            icon = {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Icon(Icons.Filled.Chat, "Social", tint = Color.White)
+                    Spacer(modifier = Modifier.height(4.dp))
+                }
+            },
+            label = { Text("Social", style = MaterialTheme.typography.bodyMedium, color = Color.White) },
             alwaysShowLabel = true
         )
 

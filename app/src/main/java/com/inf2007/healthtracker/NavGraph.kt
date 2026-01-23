@@ -1,21 +1,25 @@
 package com.inf2007.healthtracker
-
+import androidx.navigation.NavType
 import androidx.compose.runtime.Composable
 import androidx.navigation.NavGraphBuilder
 import androidx.navigation.NavHostController
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
+import androidx.navigation.navArgument
 import androidx.navigation.navigation
-import com.inf2007.healthtracker.Screens.LoginScreen
-import com.inf2007.healthtracker.Screens.SignUpScreen
 import com.google.firebase.auth.FirebaseUser
 import com.inf2007.healthtracker.Screens.CaptureFoodScreen
 import com.inf2007.healthtracker.Screens.DashboardScreen
+import com.inf2007.healthtracker.Screens.HistoryScreen
+import com.inf2007.healthtracker.Screens.LoginScreen
 import com.inf2007.healthtracker.Screens.MealPlanHistoryDetailScreen
 import com.inf2007.healthtracker.Screens.MealPlanHistoryScreen
 import com.inf2007.healthtracker.Screens.MealRecommendationScreen
 import com.inf2007.healthtracker.Screens.ProfileScreen
-import com.inf2007.healthtracker.Screens.HistoryScreen
+import com.inf2007.healthtracker.Screens.SignUpScreen
+import com.inf2007.healthtracker.Screens.ChatScreen
+import com.inf2007.healthtracker.Screens.SocialUser
+import com.inf2007.healthtracker.Screens.SocialScreen
 
 @Composable
 fun NavGraph(
@@ -52,6 +56,25 @@ fun NavGraphBuilder.mainGraph(navController: NavHostController, user: FirebaseUs
 
         composable("meal_plan_history_screen") { MealPlanHistoryScreen(navController) }
 
+        // --- NEW SOCIAL SCREENS ---
+
+        composable("social_screen") {
+            SocialScreen(navController)
+        }
+
+        composable(
+            route = "chat_screen/{friendId}/{friendName}",
+            arguments = listOf(
+                navArgument("friendId") { type = NavType.StringType },
+                navArgument("friendName") { type = NavType.StringType }
+            )
+        ) { backStackEntry ->
+            val friendId = backStackEntry.arguments?.getString("friendId") ?: ""
+            val friendName = backStackEntry.arguments?.getString("friendName") ?: ""
+            ChatScreen(navController, friendId, friendName)
+        }
+
+
         composable(
             route = "meal_recommendation_screen/{userId}",
         ) { backStackEntry ->
@@ -65,5 +88,7 @@ fun NavGraphBuilder.mainGraph(navController: NavHostController, user: FirebaseUs
 
             MealPlanHistoryDetailScreen(navController, uid, timestamp)
         }
+
+
     }
 }

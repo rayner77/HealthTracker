@@ -8,6 +8,7 @@ import androidx.navigation.compose.composable
 import androidx.navigation.navArgument
 import androidx.navigation.navigation
 import com.google.firebase.auth.FirebaseUser
+import com.inf2007.healthtracker.Screens.ActiveRecordingScreen
 import com.inf2007.healthtracker.Screens.CaptureFoodScreen
 import com.inf2007.healthtracker.Screens.DashboardScreen
 import com.inf2007.healthtracker.Screens.HistoryScreen
@@ -18,6 +19,7 @@ import com.inf2007.healthtracker.Screens.MealRecommendationScreen
 import com.inf2007.healthtracker.Screens.ProfileScreen
 import com.inf2007.healthtracker.Screens.SignUpScreen
 import com.inf2007.healthtracker.Screens.ChatScreen
+import com.inf2007.healthtracker.Screens.RecordScreen
 import com.inf2007.healthtracker.Screens.SocialUser
 import com.inf2007.healthtracker.Screens.SocialScreen
 
@@ -47,6 +49,20 @@ fun NavGraphBuilder.mainGraph(navController: NavHostController, user: FirebaseUs
     navigation(startDestination = "dashboard_screen", route = "main_graph") {
 
         composable("profile_screen") { ProfileScreen(navController) }
+
+        composable("record_screen") { RecordScreen(navController) }
+
+        composable(
+            route = "activity_recording_screen/{activityType}"
+        ) { backStackEntry ->
+            val activityType =
+                backStackEntry.arguments?.getString("activityType") ?: "Running"
+
+            ActiveRecordingScreen(
+                navController = navController,
+                activityType = activityType
+            )
+        }
 
         composable("dashboard_screen") { DashboardScreen(navController) }
 

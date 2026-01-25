@@ -29,12 +29,18 @@ import androidx.core.content.ContextCompat
 import com.inf2007.healthtracker.ui.theme.Primary
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material.icons.filled.Chat
+import androidx.compose.material.icons.filled.FiberManualRecord
 
 @Composable
 fun BottomNavigationBar(navController: NavController) {
     val navBackStackEntry by navController.currentBackStackEntryAsState()
     val currentRoute = navBackStackEntry?.destination?.route
     val context = LocalContext.current
+
+    // Hide bottom bar during live recording
+    if (currentRoute?.startsWith("activity_recording_screen") == true) {
+        return
+    }
 
     BottomNavigation(
         modifier = Modifier
@@ -85,6 +91,30 @@ fun BottomNavigationBar(navController: NavController) {
             },
             label = {Text("Meal Recs", style = MaterialTheme.typography.bodyMedium, color = Color.White) },
             alwaysShowLabel = true
+        )
+
+        // New record screen
+        BottomNavigationItem(
+            icon = {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Icon(
+                        imageVector = Icons.Filled.FiberManualRecord,
+                        contentDescription = "Record",
+                        tint = Color.White
+                    )
+                    Spacer(modifier = Modifier.height(4.dp))
+                }
+            },
+            label = {Text("Record", style = MaterialTheme.typography.bodySmall, color = Color.White) },
+            selected = currentRoute == "record_screen",
+
+            onClick = {
+                if (currentRoute != "record_screen") {
+                    navController.navigate("record_screen") {
+                        popUpTo("dashboard_screen") { inclusive = true }
+                    }
+                }
+            }
         )
 
         // 3. NEW SOCIAL ITEM ADDED HERE

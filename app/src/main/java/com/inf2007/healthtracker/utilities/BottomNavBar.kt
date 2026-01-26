@@ -58,7 +58,7 @@ fun BottomNavigationBar(navController: NavController) {
                     Spacer(modifier = Modifier.height(4.dp))
                 }
             },
-            label = {Text("Dashboard", style = MaterialTheme.typography.bodyMedium, color = Color.White) },
+            label = {Text("Home", style = MaterialTheme.typography.bodyMedium, color = Color.White) },
             selected = currentRoute == "dashboard_screen",
 
             onClick = {
@@ -89,7 +89,7 @@ fun BottomNavigationBar(navController: NavController) {
                     Spacer(modifier = Modifier.height(4.dp))
                 }
             },
-            label = {Text("Meal Recs", style = MaterialTheme.typography.bodyMedium, color = Color.White) },
+            label = {Text("Meals", style = MaterialTheme.typography.bodyMedium, color = Color.White) },
             alwaysShowLabel = true
         )
 

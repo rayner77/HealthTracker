@@ -1,5 +1,6 @@
 package com.inf2007.healthtracker.Screens
 
+import android.util.Log
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -16,6 +17,8 @@ import com.google.firebase.firestore.FieldValue
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.firestore.Query
 import com.inf2007.healthtracker.utilities.BottomNavigationBar
+import com.google.firebase.firestore.ListenerRegistration
+import com.google.firebase.firestore.FieldPath
 
 private data class GroupUi(
     val id: String,
@@ -62,18 +65,32 @@ fun CommunityScreen(navController: NavController) {
     }
 
     // Listen to memberships (collectionGroup) – requires members docs contain "uid"
-    LaunchedEffect(uid) {
-        if (uid.isBlank()) return@LaunchedEffect
+    DisposableEffect(uid) {
+        if (uid.isBlank()) {
+            joinedGroupIds = emptySet()
+            onDispose { }
+        } else {
+            val reg: ListenerRegistration =
+                db.collectionGroup("members")
+                    .whereEqualTo("uid", uid)
+                    .addSnapshotListener { snap, e ->
+                        if (e != null) {
+                            Log.e("CommunityScreen", "Membership listener failed", e)
+                            joinedGroupIds = emptySet()
+                            return@addSnapshotListener
+                        }
 
-        db.collectionGroup("members")
-            .whereEqualTo("uid", uid)
-            .addSnapshotListener { snap, _ ->
-                val ids = snap?.documents
-                    ?.mapNotNull { it.reference.parent.parent?.id }
-                    ?.toSet()
-                    ?: emptySet()
-                joinedGroupIds = ids
-            }
+                        val ids = snap?.documents
+                            ?.mapNotNull { it.reference.parent.parent?.id }
+                            ?.toSet()
+                            ?: emptySet()
+
+                        joinedGroupIds = ids
+                        Log.d("CommunityScreen", "Joined groups: ${joinedGroupIds.size} -> $joinedGroupIds")
+                    }
+
+            onDispose { reg.remove() }
+        }
     }
 
     fun joinGroup(groupId: String, onDone: (Boolean) -> Unit) {
@@ -90,7 +107,8 @@ fun CommunityScreen(navController: NavController) {
                 tx.set(memberRef, mapOf("uid" to uid, "joinedAt" to FieldValue.serverTimestamp()))
                 tx.update(groupRef, "memberCount", FieldValue.increment(1))
             }
-        }.addOnSuccessListener { onDone(true) }
+        }.addOnSuccessListener { joinedGroupIds = joinedGroupIds + groupId
+            onDone(true) }
             .addOnFailureListener { onDone(false) }
     }
 
@@ -125,6 +143,8 @@ fun CommunityScreen(navController: NavController) {
         }.addOnSuccessListener {
             creating = false
             showCreateDialog = false
+            joinedGroupIds = joinedGroupIds + groupRef.id
+            selectedTab = 0
             newName = ""; newDesc = ""
         }.addOnFailureListener { e ->
             creating = false

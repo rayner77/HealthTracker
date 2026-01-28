@@ -67,6 +67,7 @@ dependencies {
     debugImplementation(libs.androidx.ui.test.manifest)
 
     implementation(platform("com.google.firebase:firebase-bom:33.9.0"))
+    implementation("com.google.firebase:firebase-storage-ktx")
     implementation("com.google.firebase:firebase-analytics")
     implementation("io.coil-kt:coil-compose:2.1.0")
     implementation("com.google.code.gson:gson:2.8.9")
@@ -77,7 +78,7 @@ dependencies {
     implementation("androidx.compose.material3:material3:1.3.1")
     implementation("androidx.compose.material:material:1.7.8")
     implementation("androidx.compose.material:material-icons-extended:1.3.1")
-    implementation("androidx.compose.ui:ui-text-google-fonts:<latest_version>")
+    implementation("androidx.compose.ui:ui-text-google-fonts:1.7.8")
     implementation("com.google.accompanist:accompanist-permissions:0.30.1")
     implementation("com.squareup.okhttp3:logging-interceptor:4.9.3")
 

@@ -14,7 +14,7 @@ import androidx.compose.material.Icon
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Person
-import androidx.compose.material.icons.filled.Restaurant
+import androidx.compose.material.icons.filled.People
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -70,11 +70,10 @@ fun BottomNavigationBar(navController: NavController) {
             }
         )
         BottomNavigationItem(
-            selected = currentRoute == "meal_recommendation_screen",
+            selected = currentRoute?.startsWith("community") == true,
             onClick = {
-                if (currentRoute != "meal_recommendation_screen") {
-                    val userId = com.google.firebase.auth.FirebaseAuth.getInstance().currentUser?.uid
-                    navController.navigate("meal_recommendation_screen/$userId") {
+                if (currentRoute?.startsWith("community") != true) {
+                    navController.navigate("community_screen") {
                         popUpTo("dashboard_screen") { inclusive = false }
                     }
                 }
@@ -82,14 +81,14 @@ fun BottomNavigationBar(navController: NavController) {
             icon = {
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
                     Icon(
-                        imageVector = Icons.Filled.Restaurant,
-                        contentDescription = "Meal Recommendation",
+                        imageVector = Icons.Filled.People,
+                        contentDescription = "Community",
                         tint = Color.White
                     )
                     Spacer(modifier = Modifier.height(4.dp))
                 }
             },
-            label = {Text("Meals", style = MaterialTheme.typography.bodyMedium, color = Color.White) },
+            label = { Text("Community", style = MaterialTheme.typography.bodyMedium, color = Color.White) },
             alwaysShowLabel = true
         )
 

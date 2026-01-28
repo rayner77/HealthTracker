@@ -22,6 +22,8 @@ import com.inf2007.healthtracker.Screens.ChatScreen
 import com.inf2007.healthtracker.Screens.RecordScreen
 import com.inf2007.healthtracker.Screens.SocialUser
 import com.inf2007.healthtracker.Screens.SocialScreen
+import com.inf2007.healthtracker.Screens.CommunityScreen
+import com.inf2007.healthtracker.Screens.CommunityGroupScreen
 
 @Composable
 fun NavGraph(
@@ -41,7 +43,6 @@ fun NavGraphBuilder.authGraph(navController: NavHostController) {
     navigation(startDestination = "login_screen", route = "auth_graph") {
         composable("login_screen") { LoginScreen(navController) }
         composable("signup_screen") { SignUpScreen(navController) }
-        composable("dashboard_screen") { DashboardScreen(navController) }
     }
 }
 
@@ -71,6 +72,13 @@ fun NavGraphBuilder.mainGraph(navController: NavHostController, user: FirebaseUs
         composable("capture_food_screen") { CaptureFoodScreen(navController) }
 
         composable("meal_plan_history_screen") { MealPlanHistoryScreen(navController) }
+
+        composable("community_screen") { CommunityScreen(navController) }
+
+        composable("community_group/{groupId}") { backStackEntry ->
+            val groupId = backStackEntry.arguments?.getString("groupId") ?: ""
+            CommunityGroupScreen(navController = navController, groupId = groupId)
+        }
 
         // --- NEW SOCIAL SCREENS ---
 

@@ -12,13 +12,13 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.navigation.NavController
+import com.google.android.gms.tasks.Tasks
 import com.google.firebase.auth.FirebaseAuth
+import com.google.firebase.firestore.DocumentSnapshot
 import com.google.firebase.firestore.FieldValue
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.firestore.Query
 import com.inf2007.healthtracker.utilities.BottomNavigationBar
-import com.google.firebase.firestore.ListenerRegistration
-import com.google.firebase.firestore.FieldPath
 
 private data class GroupUi(
     val id: String,
@@ -50,7 +50,13 @@ fun CommunityScreen(navController: NavController) {
     LaunchedEffect(Unit) {
         db.collection("communityGroups")
             .orderBy("createdAt", Query.Direction.DESCENDING)
-            .addSnapshotListener { snap, _ ->
+            .addSnapshotListener { snap, e ->
+                if (e != null) {
+                    Log.e("CommunityScreen", "All groups listener failed", e)
+                    allGroups = emptyList()
+                    return@addSnapshotListener
+                }
+
                 val list = snap?.documents?.map { d ->
                     GroupUi(
                         id = d.id,
@@ -60,37 +66,49 @@ fun CommunityScreen(navController: NavController) {
                         memberCount = d.getLong("memberCount") ?: 0L
                     )
                 } ?: emptyList()
+
                 allGroups = list
             }
     }
 
-    // Listen to memberships (collectionGroup) – requires members docs contain "uid"
-    DisposableEffect(uid) {
+    /**
+     * Membership load (robust):
+     * For every group we loaded, check if communityGroups/{gid}/members/{uid} exists.
+     * This avoids collectionGroup edge cases and avoids the documentId() crash you hit before.
+     */
+    LaunchedEffect(uid, allGroups) {
         if (uid.isBlank()) {
             joinedGroupIds = emptySet()
-            onDispose { }
-        } else {
-            val reg: ListenerRegistration =
-                db.collectionGroup("members")
-                    .whereEqualTo("uid", uid)
-                    .addSnapshotListener { snap, e ->
-                        if (e != null) {
-                            Log.e("CommunityScreen", "Membership listener failed", e)
-                            joinedGroupIds = emptySet()
-                            return@addSnapshotListener
-                        }
-
-                        val ids = snap?.documents
-                            ?.mapNotNull { it.reference.parent.parent?.id }
-                            ?.toSet()
-                            ?: emptySet()
-
-                        joinedGroupIds = ids
-                        Log.d("CommunityScreen", "Joined groups: ${joinedGroupIds.size} -> $joinedGroupIds")
-                    }
-
-            onDispose { reg.remove() }
+            return@LaunchedEffect
         }
+        if (allGroups.isEmpty()) {
+            joinedGroupIds = emptySet()
+            return@LaunchedEffect
+        }
+
+        val refs = allGroups.map { g ->
+            db.collection("communityGroups")
+                .document(g.id)
+                .collection("members")
+                .document(uid)
+        }
+
+        val tasks = refs.map { it.get() }
+
+        Tasks.whenAllSuccess<DocumentSnapshot>(tasks)
+            .addOnSuccessListener { snaps ->
+                val ids = snaps
+                    .filter { it.exists() }
+                    .mapNotNull { it.reference.parent.parent?.id } // members -> group doc
+                    .toSet()
+
+                joinedGroupIds = ids
+                Log.d("CommunityScreen", "Memberships for uid=$uid -> ${ids.size} groups: $ids")
+            }
+            .addOnFailureListener { e ->
+                Log.e("CommunityScreen", "Failed to load memberships", e)
+                joinedGroupIds = emptySet()
+            }
     }
 
     fun joinGroup(groupId: String, onDone: (Boolean) -> Unit) {
@@ -107,9 +125,15 @@ fun CommunityScreen(navController: NavController) {
                 tx.set(memberRef, mapOf("uid" to uid, "joinedAt" to FieldValue.serverTimestamp()))
                 tx.update(groupRef, "memberCount", FieldValue.increment(1))
             }
-        }.addOnSuccessListener { joinedGroupIds = joinedGroupIds + groupId
-            onDone(true) }
-            .addOnFailureListener { onDone(false) }
+        }.addOnSuccessListener {
+            // Update UI immediately
+            joinedGroupIds = joinedGroupIds + groupId
+            selectedTab = 0
+            onDone(true)
+        }.addOnFailureListener { e ->
+            Log.e("CommunityScreen", "Join failed", e)
+            onDone(false)
+        }
     }
 
     fun createGroup() {
@@ -145,15 +169,17 @@ fun CommunityScreen(navController: NavController) {
             showCreateDialog = false
             joinedGroupIds = joinedGroupIds + groupRef.id
             selectedTab = 0
-            newName = ""; newDesc = ""
+            newName = ""
+            newDesc = ""
         }.addOnFailureListener { e ->
             creating = false
             createErr = e.message ?: "Failed to create group"
         }
     }
 
-    val yourGroups = remember(allGroups, joinedGroupIds) {
-        allGroups.filter { joinedGroupIds.contains(it.id) }
+    // Show created groups even if membership state is temporarily empty
+    val yourGroups = remember(allGroups, joinedGroupIds, uid) {
+        allGroups.filter { joinedGroupIds.contains(it.id) || it.createdBy == uid }
     }
     val joinGroups = remember(allGroups, joinedGroupIds, uid) {
         allGroups.filter { !joinedGroupIds.contains(it.id) && it.createdBy != uid }
@@ -240,14 +266,21 @@ fun CommunityScreen(navController: NavController) {
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
                 items(list) { g ->
-                    val isJoined = joinedGroupIds.contains(g.id)
+                    val isJoined = joinedGroupIds.contains(g.id) || g.createdBy == uid
+
                     Card(Modifier.fillMaxWidth()) {
                         Column(Modifier.padding(16.dp)) {
-                            Text(g.name, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                            Text(
+                                g.name,
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.SemiBold
+                            )
+
                             if (g.description.isNotBlank()) {
                                 Spacer(Modifier.height(4.dp))
                                 Text(g.description)
                             }
+
                             Spacer(Modifier.height(8.dp))
                             Text("Members: ${g.memberCount}", style = MaterialTheme.typography.bodySmall)
 

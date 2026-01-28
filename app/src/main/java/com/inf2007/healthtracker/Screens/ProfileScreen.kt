@@ -65,6 +65,7 @@ fun ProfileScreen(
     // Current values
     var userName by remember { mutableStateOf("") }
     var userEmail by remember { mutableStateOf("") }
+    var userPhone by remember { mutableStateOf("") }
     var userGender by remember { mutableStateOf("") }
     var userAge by remember { mutableStateOf("") }
     var weight by remember { mutableStateOf("") }
@@ -79,6 +80,7 @@ fun ProfileScreen(
     var originalUserName by remember { mutableStateOf("") }
     var originalUserEmail by remember { mutableStateOf("") }
     var originalUserAge by remember { mutableStateOf("") }
+    var originalUserPhone by remember { mutableStateOf("") }
     var originalWeight by remember { mutableStateOf("") }
     var originalHeight by remember { mutableStateOf("") }
     var originalActivityLevel by remember { mutableStateOf("") }
@@ -101,7 +103,7 @@ fun ProfileScreen(
     val isDataChanged by derivedStateOf {
         (userName != originalUserName) ||
         (userEmail != originalUserEmail) ||
-        (userAge != originalUserAge) ||
+        (userAge != originalUserAge) || (userPhone != originalUserPhone) ||
         (weight != originalWeight) ||
         (height != originalHeight) ||
         (activityLevel != originalActivityLevel) ||
@@ -121,6 +123,7 @@ fun ProfileScreen(
                 .addOnSuccessListener { document ->
                     userName = document.getString("name") ?: "Unknown User"
                     userEmail = document.getString("email") ?: "Unknown Email"
+                    userPhone = document.getString("phone") ?: "Not Set"
                     userGender = document.getString("gender") ?: "Not Set"
                     userAge = document.getLong("age")?.toString() ?: "0"  // Ensure age is treated as a number
                     weight = document.getLong("weight")?.toString() ?: "0"  // Ensure weight is treated as a number
@@ -135,6 +138,7 @@ fun ProfileScreen(
                     originalUserName = userName
                     originalUserEmail = userEmail
                     originalUserAge = userAge
+                    originalUserPhone = userPhone
                     originalWeight = weight
                     originalHeight = height
                     originalActivityLevel = activityLevel
@@ -211,6 +215,10 @@ fun ProfileScreen(
                                 )
                                 Text(
                                     text = userEmail,
+                                    style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Normal)
+                                )
+                                Text(
+                                    text = if (userPhone.isBlank()) "Phone: Not set" else "Phone: $userPhone",
                                     style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Normal)
                                 )
                             }
@@ -614,6 +622,26 @@ fun ProfileScreen(
                             )
 
                             // ---------------------------
+                            // Row for Phone fields
+                            // ---------------------------
+                            val canEditPhone = originalUserPhone.isBlank() || originalUserPhone == "Not Set"
+
+                            if (canEditPhone) {
+                                OutlinedTextField(
+                                    value = userPhone,
+                                    onValueChange = { userPhone = it },
+                                    label = { Text("Phone Number") },
+                                    singleLine = true,
+                                    modifier = Modifier.fillMaxWidth()
+                                )
+                            } else {
+                                Text(
+                                    text = "Phone: $userPhone",
+                                    style = MaterialTheme.typography.titleSmall
+                                )
+                            }
+
+                            // ---------------------------
                             // Row for Dietary Preference and Calorie Intake fields
                             // ---------------------------
                             Row(
@@ -888,6 +916,7 @@ fun ProfileScreen(
                                         userName = originalUserName
                                         userEmail = originalUserEmail
                                         userAge = originalUserAge
+                                        userPhone = originalUserPhone
                                         weight = originalWeight
                                         height = originalHeight
                                         activityLevel = originalActivityLevel
@@ -916,6 +945,7 @@ fun ProfileScreen(
                                             "name" to userName,
                                             "age" to userAge,
                                             "gender" to userGender,
+                                            "phone" to userPhone,
                                             "email" to userEmail,
                                             "activity_level" to activityLevel,
                                             "dietary_preference" to dietaryPreference,
@@ -938,6 +968,7 @@ fun ProfileScreen(
                                                 originalUserName = userName
                                                 originalUserEmail = userEmail
                                                 originalUserAge = userAge
+                                                originalUserPhone = userPhone
                                                 originalWeight = weight
                                                 originalHeight = height
                                                 originalActivityLevel = activityLevel

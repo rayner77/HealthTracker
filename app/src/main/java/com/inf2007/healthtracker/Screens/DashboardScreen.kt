@@ -82,7 +82,6 @@ fun DashboardScreen(
     var desiredCalorieIntake by remember { mutableStateOf(0) }
     var hydration by remember { mutableStateOf(0) }
     var weight by remember { mutableStateOf(0) }
-    var healthTips by remember { mutableStateOf("Fetching AI health tips...") }
     var isLoading by remember { mutableStateOf(true) }
     var weeklySteps by remember { mutableStateOf(listOf(1000, 1000, 1000, 1000, 1000, 1000, 1000)) }
     var desiredSteps by remember { mutableStateOf(0) }
@@ -283,14 +282,6 @@ fun DashboardScreen(
                         0
                     }
                 }
-        }
-    }
-
-    // Fetch AI health tips (independent of food entries)
-    LaunchedEffect(Unit) {
-        coroutineScope.launch {
-            healthTips = geminiService.fetchHealthTips()
-            isLoading = false
         }
     }
 
@@ -568,11 +559,6 @@ fun DashboardScreen(
             }
 
             CaptureFoodBtn(navController = navController)
-
-            Spacer(modifier = Modifier.height(16.dp))
-
-            // AI Health Tips Section
-            AIHealthTipsCard(healthTips = healthTips, isLoading = isLoading)
 
             Spacer(modifier = Modifier.height(16.dp))
 

@@ -1,6 +1,8 @@
 package com.inf2007.healthtracker.Screens
 
 import android.view.KeyEvent
+import android.util.Log
+import com.google.firebase.FirebaseApp
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -58,10 +60,13 @@ import androidx.navigation.NavController
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.auth.FirebaseAuthInvalidCredentialsException
 import com.google.firebase.auth.FirebaseAuthInvalidUserException
+import com.google.firebase.firestore.FirebaseFirestore
+import com.google.firebase.firestore.SetOptions
 import com.inf2007.healthtracker.ui.theme.Primary
 import com.inf2007.healthtracker.ui.theme.Tertiary
 import com.inf2007.healthtracker.ui.theme.Unfocused
 import android.widget.Toast
+import com.google.firebase.auth.FirebaseAuthException
 
 @Composable
 fun LoginScreen(
@@ -365,6 +370,121 @@ fun LoginScreen(
                             fontWeight = FontWeight.Bold
                         )
                     }
+                }
+
+                Spacer(modifier = Modifier.height(16.dp))
+
+                // Login with Singpass
+                Button(
+                    onClick = {
+                        if (isLoading) return@Button
+                        isLoading = true
+                        generalError = ""
+
+                        val auth = FirebaseAuth.getInstance()
+                        val db = FirebaseFirestore.getInstance()
+
+                        // ✅ Normalize email (prevents hidden whitespace issues)
+                        val singpassName = "Bob Tan"
+                        val singpassEmail = "testing123@gmail.com".trim().lowercase()
+
+                        // ✅ Must be constant to keep the same UID every time
+                        val singpassPassword = "SingpassTest123!"  // pick one and never change it
+
+                        // Debug: confirms which Firebase project the app is actually using
+                        val projectId = try { FirebaseApp.getInstance().options.projectId } catch (e: Exception) { "unknown" }
+                        Log.d("SingpassLogin", "Firebase projectId=$projectId, email=$singpassEmail")
+
+                        fun upsertUserDoc(uid: String) {
+                            val userData = hashMapOf(
+                                "uid" to uid,
+                                "name" to singpassName,
+                                "email" to singpassEmail,
+                                "friendIds" to emptyList<String>()
+                            )
+
+                            db.collection("users")
+                                .document(uid)
+                                .set(userData, SetOptions.merge())
+                                .addOnSuccessListener {
+                                    isLoading = false
+                                    Toast.makeText(context, "Logged in with Singpass!", Toast.LENGTH_SHORT).show()
+                                    navController.navigate("dashboard_screen") {
+                                        popUpTo("login_screen") { inclusive = true }
+                                    }
+                                }
+                                .addOnFailureListener { e ->
+                                    isLoading = false
+                                    generalError = "Failed to save Singpass user: ${e.message}"
+                                    auth.signOut()
+                                }
+                        }
+
+                        fun createThenProceed() {
+                            auth.createUserWithEmailAndPassword(singpassEmail, singpassPassword)
+                                .addOnSuccessListener { created ->
+                                    val uid = created.user?.uid
+                                    if (uid.isNullOrBlank()) {
+                                        isLoading = false
+                                        generalError = "Singpass signup failed: missing uid"
+                                        return@addOnSuccessListener
+                                    }
+                                    upsertUserDoc(uid)
+                                }
+                                .addOnFailureListener { ce ->
+                                    val code = (ce as? FirebaseAuthException)?.errorCode ?: ""
+                                    Log.e("SingpassLogin", "createUser failed code=$code", ce)
+
+                                    if (code == "ERROR_EMAIL_ALREADY_IN_USE") {
+                                        // This is the only case that truly indicates “account exists but password differs”
+                                        isLoading = false
+                                        generalError =
+                                            "Singpass account already exists with another password. " +
+                                                    "Reset password for $singpassEmail in Firebase Auth, or delete it and try again."
+                                    } else {
+                                        isLoading = false
+                                        generalError = ce.message ?: "Singpass signup failed"
+                                    }
+                                }
+                        }
+
+                        // 1) Try sign-in
+                        auth.signInWithEmailAndPassword(singpassEmail, singpassPassword)
+                            .addOnSuccessListener { result ->
+                                val uid = result.user?.uid
+                                if (uid.isNullOrBlank()) {
+                                    isLoading = false
+                                    generalError = "Singpass login failed: missing uid"
+                                    return@addOnSuccessListener
+                                }
+                                upsertUserDoc(uid)
+                            }
+                            .addOnFailureListener { e ->
+                                val code = (e as? FirebaseAuthException)?.errorCode ?: ""
+                                Log.e("SingpassLogin", "signIn failed code=$code", e)
+
+                                // 2) If sign-in fails for ANY reason, try creating the user.
+                                // If it truly exists, createUser will return EMAIL_ALREADY_IN_USE.
+                                createThenProceed()
+                            }
+                    },
+                    enabled = !isLoading,
+                    shape = RoundedCornerShape(12.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = Color.Red,
+                        contentColor = Color.White,
+                        disabledContainerColor = Color.Red.copy(alpha = 0.5f),
+                        disabledContentColor = Color.White
+                    ),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(56.dp)
+                ) {
+                    Text(
+                        text = "Log In with Singpass",
+                        fontWeight = FontWeight.Bold,
+                        letterSpacing = 0.5.sp
+                    )
                 }
 
                 Spacer(modifier = Modifier.height(16.dp))

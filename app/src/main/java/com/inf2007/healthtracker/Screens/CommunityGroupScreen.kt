@@ -3,6 +3,7 @@ package com.inf2007.healthtracker.Screens
 import android.Manifest
 import android.content.Intent
 import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.location.Geocoder
 import android.location.Location
 import android.net.Uri
@@ -22,7 +23,6 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.navigation.NavController
-import coil.compose.AsyncImage
 import com.google.accompanist.permissions.ExperimentalPermissionsApi
 import com.google.accompanist.permissions.isGranted
 import com.google.accompanist.permissions.rememberPermissionState
@@ -30,10 +30,10 @@ import com.google.android.gms.location.LocationServices
 import com.google.android.gms.location.Priority
 import com.google.android.gms.tasks.CancellationTokenSource
 import com.google.firebase.auth.FirebaseAuth
+import com.google.firebase.firestore.Blob
 import com.google.firebase.firestore.FieldValue
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.firestore.Query
-import com.google.firebase.storage.FirebaseStorage
 import com.inf2007.healthtracker.utilities.BottomNavigationBar
 import com.inf2007.healthtracker.utilities.ImageUtils
 import kotlinx.coroutines.Dispatchers
@@ -42,15 +42,13 @@ import kotlinx.coroutines.withContext
 import java.io.ByteArrayOutputStream
 import java.util.Date
 import java.util.Locale
-import java.util.UUID
 
 private data class PostUi(
     val id: String,
     val uid: String,
     val displayName: String,
     val text: String,
-    val imageUrl: String?,
-    val imagePath: String?,
+    val imageBytes: ByteArray?,          // Firestore-only image storage
     val locationLat: Double?,
     val locationLng: Double?,
     val locationAcc: Double?,
@@ -63,7 +61,6 @@ private data class PostUi(
 fun CommunityGroupScreen(navController: NavController, groupId: String) {
     val uid = FirebaseAuth.getInstance().currentUser?.uid.orEmpty()
     val db = remember { FirebaseFirestore.getInstance() }
-    val storage = remember { FirebaseStorage.getInstance() }
 
     val context = androidx.compose.ui.platform.LocalContext.current
     val imageUtils = remember { ImageUtils(context) }
@@ -95,14 +92,15 @@ fun CommunityGroupScreen(navController: NavController, groupId: String) {
         val q = if (!label.isNullOrBlank()) Uri.encode(label) else "$lat,$lng"
         val uri = Uri.parse("geo:$lat,$lng?q=$lat,$lng($q)")
         val intent = Intent(Intent.ACTION_VIEW, uri).apply {
-            // Prefer Google Maps if present; safe even if not installed
             setPackage("com.google.android.apps.maps")
         }
         try {
             context.startActivity(intent)
         } catch (_: Exception) {
-            // fallback to any map app / browser
-            val fallback = Intent(Intent.ACTION_VIEW, Uri.parse("https://www.google.com/maps/search/?api=1&query=$lat,$lng"))
+            val fallback = Intent(
+                Intent.ACTION_VIEW,
+                Uri.parse("https://www.google.com/maps/search/?api=1&query=$lat,$lng")
+            )
             context.startActivity(fallback)
         }
     }
@@ -114,7 +112,6 @@ fun CommunityGroupScreen(navController: NavController, groupId: String) {
             val results = geocoder.getFromLocation(lat, lng, 1)
             val a = results?.firstOrNull() ?: return@withContext null
 
-            // Build a clean, short label
             val parts = listOfNotNull(
                 a.featureName,
                 a.thoroughfare,
@@ -148,7 +145,7 @@ fun CommunityGroupScreen(navController: NavController, groupId: String) {
                     }
                 }
                 .addOnFailureListener { onDone(null) }
-        } catch (se: SecurityException) {
+        } catch (_: SecurityException) {
             onDone(null)
         }
     }
@@ -162,7 +159,6 @@ fun CommunityGroupScreen(navController: NavController, groupId: String) {
                     Log.e("CommunityGroup", "Location is null (GPS off / emulator / no fix)")
                     return@fetchCurrentLocation
                 }
-                // Resolve human-readable name
                 resolvingPlace = true
                 scope.launch {
                     attachedPlaceName = reverseGeocode(loc.latitude, loc.longitude)
@@ -203,20 +199,22 @@ fun CommunityGroupScreen(navController: NavController, groupId: String) {
             }
     }
 
-    // Posts listener
+    // Posts listener (reads imageBlob bytes instead of imageUrl/path)
     LaunchedEffect(groupId) {
         db.collection("communityGroups").document(groupId)
             .collection("posts")
             .orderBy("createdAt", Query.Direction.DESCENDING)
             .addSnapshotListener { snap, _ ->
                 val list = snap?.documents?.map { d ->
+                    val blob = d.getBlob("imageBlob")
+                    val bytes = blob?.toBytes()
+
                     PostUi(
                         id = d.id,
                         uid = d.getString("uid") ?: "",
                         displayName = d.getString("displayName") ?: "User",
                         text = d.getString("text") ?: "",
-                        imageUrl = d.getString("imageUrl"),
-                        imagePath = d.getString("imagePath"),
+                        imageBytes = bytes,
                         locationLat = d.getDouble("locationLat"),
                         locationLng = d.getDouble("locationLng"),
                         locationAcc = d.getDouble("locationAcc"),
@@ -260,32 +258,32 @@ fun CommunityGroupScreen(navController: NavController, groupId: String) {
         }
     }
 
-    fun uploadBitmap(
-        bitmap: Bitmap,
-        groupId: String,
-        onDone: (imageUrl: String?, imagePath: String?) -> Unit
-    ) {
-        val bytes = ByteArrayOutputStream().use { baos ->
-            bitmap.compress(Bitmap.CompressFormat.JPEG, 85, baos)
-            baos.toByteArray()
+    /**
+     * Firestore-only image storage:
+     * - Downscale + compress to keep well under Firestore 1 MiB document limit.
+     */
+    fun compressForFirestore(bitmap: Bitmap, maxBytes: Int = 900_000): ByteArray {
+        val w = bitmap.width
+        val h = bitmap.height
+        val longSide = maxOf(w, h)
+        val scale = if (longSide > 720) 720f / longSide else 1f
+
+        val scaled = if (scale < 1f) {
+            Bitmap.createScaledBitmap(bitmap, (w * scale).toInt(), (h * scale).toInt(), true)
+        } else bitmap
+
+        var q = 80
+        val out = ByteArrayOutputStream()
+        scaled.compress(Bitmap.CompressFormat.JPEG, q, out)
+        var bytes = out.toByteArray()
+
+        while (bytes.size > maxBytes && q > 30) {
+            q -= 10
+            out.reset()
+            scaled.compress(Bitmap.CompressFormat.JPEG, q, out)
+            bytes = out.toByteArray()
         }
-
-        val imagePath = "communityPosts/$groupId/${UUID.randomUUID()}.jpg"
-        val ref = storage.reference.child(imagePath)
-
-        ref.putBytes(bytes)
-            .addOnSuccessListener {
-                ref.downloadUrl
-                    .addOnSuccessListener { uri ->
-                        onDone(uri.toString(), imagePath)
-                    }
-                    .addOnFailureListener {
-                        onDone(null, null)
-                    }
-            }
-            .addOnFailureListener {
-                onDone(null, null)
-            }
+        return bytes
     }
 
     fun createPost() {
@@ -301,76 +299,55 @@ fun CommunityGroupScreen(navController: NavController, groupId: String) {
 
         posting = true
 
-        fun writePost(imageUrl: String?, imagePath: String?) {
-            val displayName =
-                FirebaseAuth.getInstance().currentUser?.email?.substringBefore("@") ?: "User"
+        val displayName =
+            FirebaseAuth.getInstance().currentUser?.email?.substringBefore("@") ?: "User"
 
-            val data = mutableMapOf<String, Any>(
-                "uid" to uid,
-                "displayName" to displayName,
-                "text" to text,
-                "createdAt" to FieldValue.serverTimestamp()
-            )
+        val data = mutableMapOf<String, Any>(
+            "uid" to uid,
+            "displayName" to displayName,
+            "text" to text,
+            "createdAt" to FieldValue.serverTimestamp()
+        )
 
-            if (!imageUrl.isNullOrBlank() && !imagePath.isNullOrBlank()) {
-                data["imageUrl"] = imageUrl
-                data["imagePath"] = imagePath
-            }
-
-            if (loc != null) {
-                data["locationLat"] = loc.latitude
-                data["locationLng"] = loc.longitude
-                if (loc.accuracy > 0f) data["locationAcc"] = loc.accuracy.toDouble()
-                if (!locName.isNullOrBlank()) data["locationName"] = locName
-            }
-
-            db.collection("communityGroups").document(groupId)
-                .collection("posts")
-                .add(data)
-                .addOnSuccessListener {
-                    posting = false
-                    message = ""
-                    selectedBitmap = null
-                    attachedLocation = null
-                    attachedPlaceName = null
-                }
-                .addOnFailureListener { e ->
-                    posting = false
-                    Log.e("CommunityGroup", "Failed to create post", e)
-                }
-        }
-
-        // If there is an image, upload first then write post
+        // Store image bytes directly in Firestore as Blob
         if (bmp != null) {
-            uploadBitmap(bmp, groupId) { url, path ->
-                if (url == null || path == null) {
-                    // still allow a text/location-only post
-                    writePost(null, null)
-                } else {
-                    writePost(url, path)
-                }
+            try {
+                val bytes = compressForFirestore(bmp)
+                data["imageBlob"] = Blob.fromBytes(bytes)
+            } catch (e: Exception) {
+                Log.e("CommunityGroup", "Failed to compress image for Firestore", e)
             }
-        } else {
-            writePost(null, null)
         }
+
+        if (loc != null) {
+            data["locationLat"] = loc.latitude
+            data["locationLng"] = loc.longitude
+            if (loc.accuracy > 0f) data["locationAcc"] = loc.accuracy.toDouble()
+            if (!locName.isNullOrBlank()) data["locationName"] = locName
+        }
+
+        db.collection("communityGroups").document(groupId)
+            .collection("posts")
+            .add(data)
+            .addOnSuccessListener {
+                posting = false
+                message = ""
+                selectedBitmap = null
+                attachedLocation = null
+                attachedPlaceName = null
+            }
+            .addOnFailureListener { e ->
+                posting = false
+                Log.e("CommunityGroup", "Failed to create post", e)
+            }
     }
 
+    // Delete post: Firestore-only (no Storage delete)
     fun deletePost(p: PostUi) {
         if (p.uid != uid) return
-
-        val postRef = db.collection("communityGroups").document(groupId)
+        db.collection("communityGroups").document(groupId)
             .collection("posts").document(p.id)
-
-        val path = p.imagePath
-        if (!path.isNullOrBlank()) {
-            storage.reference.child(path)
-                .delete()
-                .addOnCompleteListener {
-                    postRef.delete()
-                }
-        } else {
-            postRef.delete()
-        }
+            .delete()
     }
 
     fun saveEdit() {
@@ -474,7 +451,7 @@ fun CommunityGroupScreen(navController: NavController, groupId: String) {
 
                 Spacer(Modifier.height(8.dp))
 
-                // Row 2 (below): Location + Post
+                // Row 2: Location + Post
                 Row(
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                     modifier = Modifier.fillMaxWidth()
@@ -616,7 +593,6 @@ fun CommunityGroupScreen(navController: NavController, groupId: String) {
 
                             if (p.locationLat != null && p.locationLng != null) {
                                 Spacer(Modifier.height(6.dp))
-
                                 val label = p.locationName
                                 val acc = p.locationAcc?.toInt()
                                 val accText = if (acc != null) " (±${acc}m)" else ""
@@ -638,15 +614,21 @@ fun CommunityGroupScreen(navController: NavController, groupId: String) {
                                 }
                             }
 
-                            if (!p.imageUrl.isNullOrBlank()) {
-                                Spacer(Modifier.height(8.dp))
-                                AsyncImage(
-                                    model = p.imageUrl,
-                                    contentDescription = "Post image",
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .height(220.dp)
-                                )
+                            // Render Firestore-only image bytes
+                            if (p.imageBytes != null && p.imageBytes.isNotEmpty()) {
+                                val bmp = remember(p.id, p.imageBytes.size) {
+                                    BitmapFactory.decodeByteArray(p.imageBytes, 0, p.imageBytes.size)
+                                }
+                                if (bmp != null) {
+                                    Spacer(Modifier.height(8.dp))
+                                    Image(
+                                        bitmap = bmp.asImageBitmap(),
+                                        contentDescription = "Post image",
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .height(220.dp)
+                                    )
+                                }
                             }
 
                             Spacer(Modifier.height(6.dp))

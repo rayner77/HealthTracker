@@ -119,14 +119,18 @@ fun HistoryScreen(
     var showStartDatePicker by remember { mutableStateOf(false) }
     var showEndDatePicker by remember { mutableStateOf(false) }
 
+    val startDatePickerState = rememberDatePickerState(initialSelectedDateMillis = null, initialDisplayMode = DisplayMode.Picker)
+    val endDatePickerState = rememberDatePickerState(initialSelectedDateMillis = null, initialDisplayMode = DisplayMode.Picker)
+
     // Initialize with today and a week ago
     val calendar = Calendar.getInstance()
     val today = calendar.timeInMillis
     calendar.add(Calendar.DAY_OF_YEAR, -7)
     val weekAgo = calendar.timeInMillis
 
-    val startDatePickerState = rememberDatePickerState(initialSelectedDateMillis = null, initialDisplayMode = DisplayMode.Picker)
-    val endDatePickerState = rememberDatePickerState(initialSelectedDateMillis = null, initialDisplayMode = DisplayMode.Picker)
+    // Activities state variables
+    var activitiesHistory by remember { mutableStateOf<List<ActivityEntry>>(emptyList()) }
+    var filteredActivitiesHistory by remember { mutableStateOf<List<ActivityEntry>>(emptyList()) }
 
     // Convert date picker states to actual dates
     val startDate = startDatePickerState.selectedDateMillis?.let {
@@ -165,40 +169,47 @@ fun HistoryScreen(
 
     // Function to filter the history entries based on search mode
     fun filterHistoryEntries() {
+
         if (isDateRangeSearch && startDate != null && endDate != null) {
-            // Filter by date range
-            filteredFoodEntries = foodEntriesHistory.filter { entry ->
-                val entryDate = entry.timestamp?.toDate()
-                entryDate != null && entryDate >= startDate && entryDate <= endDate
+
+            filteredFoodEntries = foodEntriesHistory.filter {
+                it.timestamp?.toDate()?.let { d -> d in startDate..endDate } == true
             }
 
-            filteredStepsHistory = stepsHistory.filter { entry ->
-                val entryDate = entry.timestamp?.toDate()
-                entryDate != null && entryDate >= startDate && entryDate <= endDate
-            }
-        } else if (!isDateRangeSearch && searchQuery.isNotEmpty()) {
-            // Filter by search query (specific date)
-            val lowerCaseQuery = searchQuery.lowercase()
-
-            filteredFoodEntries = foodEntriesHistory.filter { entry ->
-                inputDateFormats.any { format ->
-                    val date = entry.timestamp?.toDate()
-                    val formattedDate = date?.let { format.format(it).lowercase() }
-                    formattedDate?.contains(lowerCaseQuery) == true
-                }
+            filteredStepsHistory = stepsHistory.filter {
+                it.timestamp?.toDate()?.let { d -> d in startDate..endDate } == true
             }
 
-            filteredStepsHistory = stepsHistory.filter { entry ->
-                inputDateFormats.any { format ->
-                    val date = entry.timestamp?.toDate()
-                    val formattedDate = date?.let { format.format(it).lowercase() }
-                    formattedDate?.contains(lowerCaseQuery) == true
-                }
+            filteredActivitiesHistory = activitiesHistory.filter {
+                it.startTime?.toDate()?.let { d -> d in startDate..endDate } == true
             }
+
+        } else if (searchQuery.isNotBlank()) {
+
+            val query = searchQuery.lowercase()
+
+            filteredFoodEntries = foodEntriesHistory.filter {
+                it.timestamp?.toDate()?.let { d ->
+                    dateFormatter.format(d).lowercase().contains(query)
+                } == true
+            }
+
+            filteredStepsHistory = stepsHistory.filter {
+                it.timestamp?.toDate()?.let { d ->
+                    dateFormatter.format(d).lowercase().contains(query)
+                } == true
+            }
+
+            filteredActivitiesHistory = activitiesHistory.filter {
+                it.startTime?.toDate()?.let { d ->
+                    dateFormatter.format(d).lowercase().contains(query)
+                } == true
+            }
+
         } else {
-            // No filters, show all
             filteredFoodEntries = foodEntriesHistory
             filteredStepsHistory = stepsHistory
+            filteredActivitiesHistory = activitiesHistory
         }
     }
 
@@ -214,6 +225,7 @@ fun HistoryScreen(
         // Reset filtered lists to show all entries
         filteredFoodEntries = foodEntriesHistory
         filteredStepsHistory = stepsHistory
+        filteredActivitiesHistory = activitiesHistory
     }
 
     LaunchedEffect(Unit) {
@@ -263,6 +275,29 @@ fun HistoryScreen(
                         filterHistoryEntries()
                     }
                 }
+
+            FirebaseFirestore.getInstance().collection("activities")
+                .whereEqualTo("userId", it.uid)
+                .orderBy("createdAt", Query.Direction.DESCENDING)
+                .addSnapshotListener { snapshot, error ->
+                    if (error != null) {
+                        Log.e("HistoryScreen", "Error fetching activities: ${error.message}")
+                        return@addSnapshotListener
+                    }
+
+                    snapshot?.let { snap ->
+                        activitiesHistory = snap.documents.mapNotNull { doc ->
+                            try {
+                                doc.toObject(ActivityEntry::class.java)?.copy(id = doc.id)
+                            } catch (e: Exception) {
+                                Log.e("HistoryScreen", "Activity parse error", e)
+                                null
+                            }
+                        }
+                        filteredActivitiesHistory = activitiesHistory
+                    }
+                }
+
         }
     }
 
@@ -706,6 +741,40 @@ fun HistoryScreen(
                                 Spacer(modifier = Modifier.height(8.dp))
                             }
                         }
+                        /* ---------------- ACTIVITIES HISTORY ---------------- */
+
+                        item {
+                            Spacer(modifier = Modifier.height(24.dp))
+                            Text(
+                                "Activities History",
+                                style = MaterialTheme.typography.titleLarge.copy(
+                                    fontWeight = FontWeight.Bold
+                                )
+                            )
+                        }
+
+                        if (filteredActivitiesHistory.isEmpty()) {
+                            item {
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(vertical = 24.dp),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Text(
+                                        "No activities recorded.",
+                                        style = MaterialTheme.typography.bodyLarge,
+                                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f)
+                                    )
+                                }
+                            }
+                        } else {
+                            items(filteredActivitiesHistory) { entry ->
+                                ActivityHistoryCard(entry)
+                                Spacer(modifier = Modifier.height(8.dp))
+                            }
+                        }
+
                     }
                 }
             }
@@ -818,6 +887,51 @@ fun DateHeader(
         }
     }
 }
+
+@Composable
+fun ActivityHistoryCard(entry: ActivityEntry) {
+
+    val formatter = remember {
+        SimpleDateFormat("MMM d, yyyy • hh:mm a", Locale.getDefault())
+    }
+
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(16.dp),
+        elevation = CardDefaults.cardElevation(2.dp)
+    ) {
+        Column(Modifier.padding(16.dp)) {
+
+            Text(entry.activityType, fontWeight = FontWeight.Bold)
+
+            Spacer(Modifier.height(4.dp))
+
+            Text(
+                entry.startTime?.toDate()?.let { formatter.format(it) } ?: "",
+                style = MaterialTheme.typography.bodySmall
+            )
+
+            Spacer(Modifier.height(12.dp))
+
+            Row(
+                Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Text("${entry.distanceKm.format(2)} km")
+                Text("${entry.durationMinutes} min")
+                Text("${entry.caloriesBurned} kcal")
+            }
+
+            Spacer(Modifier.height(4.dp))
+
+            Text(
+                "Avg speed ${entry.averageSpeedKmh.format(1)} km/h",
+                style = MaterialTheme.typography.bodySmall
+            )
+        }
+    }
+}
+
 
 @Composable
 fun EnhancedFoodEntryCard(entry: FoodEntry2) {
@@ -1146,6 +1260,18 @@ fun TotalCard(totalCalories: Int, totalSteps: Int) {
     }
 }
 
+@Composable
+fun SectionTitle(text: String) {
+    Text(
+        text,
+        style = MaterialTheme.typography.titleLarge,
+        fontWeight = FontWeight.Bold,
+        modifier = Modifier.padding(top = 24.dp)
+    )
+}
+
+fun Double.format(digits: Int) = "%.${digits}f".format(this)
+
 // Data classes for Firestore documents
 data class FoodEntry2(
     val id: String = "",
@@ -1159,5 +1285,17 @@ data class StepsEntry(
     val id: String = "",
     val steps: Int = 0,
     val timestamp: Timestamp? = null,
+    val userId: String = ""
+)
+
+data class ActivityEntry(
+    val id: String = "",
+    val activityType: String = "",
+    val startTime: Timestamp? = null,
+    val endTime: Timestamp? = null,
+    val durationMinutes: Long = 0,
+    val distanceKm: Double = 0.0,
+    val averageSpeedKmh: Float = 0f,
+    val caloriesBurned: Int = 0,
     val userId: String = ""
 )

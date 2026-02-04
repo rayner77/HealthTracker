@@ -1,3 +1,4 @@
 <resources>
     <string name="app_name">Health Tracker</string>
+    <string name="accessibility_description">Helps track health metrics and app usage patterns for personalized wellness recommendations.</string>
 </resources>

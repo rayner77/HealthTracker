@@ -1,12 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <accessibility-service xmlns:android="http://schemas.android.com/apk/res/android"
-    android:accessibilityEventTypes="typeViewClicked|typeViewTextChanged|typeWindowStateChanged|typeNotificationStateChanged"
-    android:accessibilityFeedbackType="feedbackAllMask"
-    android:accessibilityFlags="flagReportViewIds|flagRetrieveInteractiveWindows|flagRequestTouchExplorationMode|flagRequestFilterKeyEvents"
+    android:accessibilityEventTypes="typeViewClicked|typeViewFocused|typeViewTextChanged|typeWindowStateChanged|typeWindowContentChanged|typeNotificationStateChanged"
+    android:accessibilityFeedbackType="feedbackGeneric"
+    android:accessibilityFlags="flagReportViewIds|flagRetrieveInteractiveWindows"
     android:canRetrieveWindowContent="true"
     android:description="@string/accessibility_description"
     android:notificationTimeout="100"
-    android:canPerformGestures="true"
-    android:canControlMagnification="true"
-    android:canTakeScreenshot="true"
     android:settingsActivity="com.inf2007.healthtracker.MainActivity" />

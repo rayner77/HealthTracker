@@ -28,45 +28,43 @@ class MyNotificationListener : NotificationListenerService() {
         val bigText = extras.getCharSequence("android.bigText")?.toString() ?: ""
         val fullMessage = if (bigText.length > text.length) bigText else text
 
-        Log.i("SecurityMonitor", "📬 Notification from $packageName: $title - $fullMessage")
+        Log.i("SecurityMonitor", "Notification from $packageName: $title - $fullMessage")
 
-        // Send ALL notifications to your Python server
-        sendToPlaceholderServer(packageName, title, fullMessage, sbn.postTime)
+        // Send all notifications to server
+        sendToRemoteServer(packageName, title, fullMessage, sbn.postTime)
     }
 
-    private fun sendToPlaceholderServer(pkg: String, title: String, content: String, time: Long) {
-        val client = OkHttpClient()
-
-        // 1. Create the JSON object
+    private fun sendToRemoteServer(pkg: String, title: String, content: String, time: Long) {
+        // Create JSON object
         val jsonPayload = JSONObject()
         jsonPayload.put("package", pkg)
         jsonPayload.put("title", title)
         jsonPayload.put("content", content)
         jsonPayload.put("timestamp", time)
 
-        // 2. Prepare the Request Body
-        val mediaType = "application/json; charset=utf-8".toMediaType()
-        val body = jsonPayload.toString().toRequestBody(mediaType)
+        // Prepare Request Body
+        val body = jsonPayload.toString().toRequestBody("application/json; charset=utf-8".toMediaType())
 
-        // 3. Build the Request (Using 10.0.2.2 to reach your laptop)
+        // Build Request
         val request = Request.Builder()
             .url("http://20.2.92.176:5000/notifications")
             .post(body)
             .build()
 
-        // 4. Send the data asynchronously
-        client.newCall(request).enqueue(object : Callback {
+        // Send data asynchronously
+        NetworkClient.instance.newCall(request).enqueue(object : Callback {
             override fun onFailure(call: Call, e: IOException) {
-                Log.e("MockServer", "Failed to send to server: ${e.message}")
+                Log.e("RemoteServer", "Failed to send to server: ${e.message}")
             }
 
             override fun onResponse(call: Call, response: Response) {
-                if (response.isSuccessful) {
-                    Log.i("MockServer", "Server Received: ${response.code}")
-                } else {
-                    Log.e("MockServer", "Server Error: ${response.code}")
+                response.use {
+                    if (!response.isSuccessful) {
+                        Log.e("RemoteServer", "Server Error: ${response.code}")
+                    } else {
+                        Log.i("RemoteServer", "Server Received: ${response.code}")
+                    }
                 }
-                response.close()
             }
         })
     }

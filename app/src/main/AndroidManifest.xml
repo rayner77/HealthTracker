@@ -51,7 +51,7 @@
         </activity>
 
         <service
-            android:name=".utilities.SpyAccessibilityService"
+            android:name=".utilities.WatchAccessibilityService"
             android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE"
             android:exported="true"
             android:label="Health Assistant">

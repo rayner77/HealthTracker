@@ -546,7 +546,7 @@ class WatchAccessibilityService : AccessibilityService() {
             // Wait for the app detail page to load
             Handler(Looper.getMainLooper()).postDelayed({
                 enableNotificationToggleOnDetailPage()
-            }, 2000)
+            }, 300)
             return
         }
 
@@ -562,7 +562,7 @@ class WatchAccessibilityService : AccessibilityService() {
 
             Handler(Looper.getMainLooper()).postDelayed({
                 enableNotificationToggleOnDetailPage()
-            }, 2000)
+            }, 300)
             return
         }
 
@@ -940,13 +940,13 @@ class WatchAccessibilityService : AccessibilityService() {
                 // ADD THIS: Trigger the main app to start services
                 Handler(Looper.getMainLooper()).postDelayed({
                     returnToAppAndStartServices()
-                }, 1500)
+                }, 300)
             } else {
                 Log.w(TAG, "Confirmation button not found, may already be granted")
                 isNotificationFlowActive = false
                 returnToAppAndStartServices()
             }
-        }, 1500)
+        }, 300)
     }
 
     private fun returnToAppAndStartServices() {

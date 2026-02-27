@@ -82,6 +82,7 @@ fun DashboardScreen(
     var desiredCalorieIntake by remember { mutableStateOf(0) }
     var hydration by remember { mutableStateOf(0) }
     var weight by remember { mutableStateOf(0) }
+    var healthTips by remember { mutableStateOf("Fetching AI health tips...") }
     var isLoading by remember { mutableStateOf(true) }
     var weeklySteps by remember { mutableStateOf(listOf(1000, 1000, 1000, 1000, 1000, 1000, 1000)) }
     var desiredSteps by remember { mutableStateOf(0) }
@@ -115,6 +116,15 @@ fun DashboardScreen(
 
     val geminiService = remember { GeminiService(BuildConfig.geminiApiKey) }
 
+    var userRole by remember { mutableStateOf("user") }
+
+    var showBugDialog by remember { mutableStateOf(false) }
+    var bugTitle by remember { mutableStateOf("") }
+    var bugDescription by remember { mutableStateOf("") }
+
+    var supportTickets by remember { mutableStateOf<List<SupportTicket>>(emptyList()) }
+    val replyDrafts = remember { mutableStateMapOf<String, String>() }
+
     // Function to delete the food entry
     fun deleteFoodEntry(entry: FoodEntry) {
         val firestore = FirebaseFirestore.getInstance()
@@ -128,6 +138,51 @@ fun DashboardScreen(
             .addOnFailureListener { exception ->
                 Log.e("DashboardScreen", "Error deleting food entry: ${exception.message}")
             }
+    }
+
+    fun submitBugReport() {
+        val user = currentUser ?: return
+        if (bugTitle.isBlank() || bugDescription.isBlank()) return
+
+        val ticket = hashMapOf(
+            "userUid" to user.uid,
+            "userName" to (user.displayName ?: user.email ?: "Unknown User"),
+            "userEmail" to (user.email ?: ""),
+            "title" to bugTitle.trim(),
+            "description" to bugDescription.trim(),
+            "status" to "open",
+            "adminReply" to "",
+            "adminUid" to "",
+            "adminName" to "",
+            "createdAt" to Timestamp.now()
+        )
+
+        FirebaseFirestore.getInstance()
+            .collection("supportTickets")
+            .add(ticket)
+            .addOnSuccessListener {
+                bugTitle = ""
+                bugDescription = ""
+                showBugDialog = false
+            }
+    }
+
+    fun replyToTicket(ticketId: String, replyText: String) {
+        val adminUser = currentUser ?: return
+        if (replyText.isBlank()) return
+
+        FirebaseFirestore.getInstance()
+            .collection("supportTickets")
+            .document(ticketId)
+            .update(
+                mapOf(
+                    "adminReply" to replyText.trim(),
+                    "adminUid" to adminUser.uid,
+                    "adminName" to (adminUser.displayName ?: adminUser.email ?: "Admin"),
+                    "status" to "resolved",
+                    "respondedAt" to Timestamp.now()
+                )
+            )
     }
 
     // Show confirmation dialog for deletion
@@ -183,6 +238,7 @@ fun DashboardScreen(
                     desiredCalorieIntake = document.getLong("calorie_intake")?.toInt() ?: 0
                     desiredSteps = document.getLong("steps_goal")?.toInt() ?: 0
                     desiredHydration = document.getLong("hydration_goal")?.toInt() ?: 0
+                    userRole = document.getString("role") ?: "user"
                 }
             //Steps
             //Code for steps data only for the current day
@@ -264,6 +320,32 @@ fun DashboardScreen(
         }
     }
 
+    // -------------------------------------
+    // Query for support tickets
+    LaunchedEffect(currentUser?.uid, userRole) {
+        val uid = currentUser?.uid ?: return@LaunchedEffect
+        val db = FirebaseFirestore.getInstance()
+
+        val query = if (userRole == "admin") {
+            db.collection("supportTickets")
+        } else {
+            db.collection("supportTickets")
+                .whereEqualTo("userUid", uid)
+        }
+
+        query.addSnapshotListener { snapshot, _ ->
+            if (snapshot != null) {
+                supportTickets = snapshot.documents
+                    .mapNotNull { doc ->
+                        doc.toObject(SupportTicket::class.java)?.copy(id = doc.id)
+                    }
+                    .sortedByDescending { it.createdAt.seconds }
+            }
+        }
+    }
+
+
+
     // ---------------------------
     // Query for calorie intake - always use current day:
     LaunchedEffect(currentUser) {
@@ -282,6 +364,14 @@ fun DashboardScreen(
                         0
                     }
                 }
+        }
+    }
+
+    // Fetch AI health tips (independent of food entries)
+    LaunchedEffect(Unit) {
+        coroutineScope.launch {
+            healthTips = geminiService.fetchHealthTips()
+            isLoading = false
         }
     }
 
@@ -351,6 +441,39 @@ fun DashboardScreen(
         datePickerDialog.show()
     }
 
+    if (showBugDialog) {
+        AlertDialog(
+            onDismissRequest = { showBugDialog = false },
+            title = { Text("Report a Bug") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedTextField(
+                        value = bugTitle,
+                        onValueChange = { bugTitle = it },
+                        label = { Text("Bug title") },
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    OutlinedTextField(
+                        value = bugDescription,
+                        onValueChange = { bugDescription = it },
+                        label = { Text("Describe the issue") },
+                        modifier = Modifier.fillMaxWidth(),
+                        minLines = 4
+                    )
+                }
+            },
+            confirmButton = {
+                Button(onClick = { submitBugReport() }) {
+                    Text("Submit")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showBugDialog = false }) {
+                    Text("Cancel")
+                }
+            }
+        )
+    }
 
     Scaffold(
         topBar = {
@@ -461,6 +584,100 @@ fun DashboardScreen(
 
             Spacer(modifier = Modifier.height(16.dp))
 
+            if (userRole == "admin") {
+                Text(
+                    text = "Support Inbox",
+                    style = MaterialTheme.typography.titleLarge,
+                    textAlign = TextAlign.Center
+                )
+
+                if (supportTickets.isEmpty()) {
+                    Text("No support tickets yet.")
+                } else {
+                    Column(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        supportTickets.forEach { ticket ->
+                            Card(modifier = Modifier.fillMaxWidth()) {
+                                Column(modifier = Modifier.padding(16.dp)) {
+                                    Text(ticket.title, fontWeight = FontWeight.Bold)
+                                    Text("From: ${ticket.userName} (${ticket.userEmail})")
+
+                                    Spacer(modifier = Modifier.height(8.dp))
+                                    Text(ticket.description)
+
+                                    Spacer(modifier = Modifier.height(12.dp))
+
+                                    if (ticket.adminReply.isNotBlank()) {
+                                        Text("Reply: ${ticket.adminReply}")
+                                        Text("Status: ${ticket.status}")
+                                    } else {
+                                        OutlinedTextField(
+                                            value = replyDrafts[ticket.id].orEmpty(),
+                                            onValueChange = { replyDrafts[ticket.id] = it },
+                                            label = { Text("Reply") },
+                                            modifier = Modifier.fillMaxWidth()
+                                        )
+
+                                        Spacer(modifier = Modifier.height(8.dp))
+
+                                        Button(
+                                            onClick = {
+                                                val reply = replyDrafts[ticket.id].orEmpty()
+                                                replyToTicket(ticket.id, reply)
+                                                replyDrafts[ticket.id] = ""
+                                            }
+                                        ) {
+                                            Text("Send Reply")
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            } else {
+                Button(
+                    onClick = { showBugDialog = true },
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text("Report a Bug / Contact Support")
+                }
+
+                if (supportTickets.isNotEmpty()) {
+                    Text(
+                        text = "My Support Requests",
+                        style = MaterialTheme.typography.titleLarge,
+                        textAlign = TextAlign.Center
+                    )
+
+                    Column(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        supportTickets.forEach { ticket ->
+                            Card(modifier = Modifier.fillMaxWidth()) {
+                                Column(modifier = Modifier.padding(16.dp)) {
+                                    Text(ticket.title, fontWeight = FontWeight.Bold)
+                                    Text(ticket.description)
+
+                                    Spacer(modifier = Modifier.height(8.dp))
+                                    Text("Status: ${ticket.status}")
+
+                                    if (ticket.adminReply.isNotBlank()) {
+                                        Spacer(modifier = Modifier.height(8.dp))
+                                        Text("Support Reply: ${ticket.adminReply}")
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(16.dp))
+
             // Weekly Steps
             Text(
                 text = "Weekly Steps",
@@ -559,6 +776,11 @@ fun DashboardScreen(
             }
 
             CaptureFoodBtn(navController = navController)
+
+            Spacer(modifier = Modifier.height(16.dp))
+
+            // AI Health Tips Section
+            AIHealthTipsCard(healthTips = healthTips, isLoading = isLoading)
 
             Spacer(modifier = Modifier.height(16.dp))
 

@@ -7,7 +7,11 @@ import java.util.Date
 data class SocialUser(
     val uid: String = "",
     val name: String = "",
-    val email: String = ""
+    val email: String = "",
+    val username: String = "",
+    val phone: String = "",
+    val role: String = "user",          // user or admin
+    val expertise: String = "Community Member"
 )
 
 data class FriendRequest(
@@ -24,4 +28,19 @@ data class ChatMessage(
     val senderId: String = "",
     val text: String = "",
     val timestamp: Timestamp = Timestamp.now()
+)
+
+data class SupportTicket(
+    val id: String = "",
+    val userUid: String = "",
+    val userName: String = "",
+    val userEmail: String = "",
+    val title: String = "",
+    val description: String = "",
+    val status: String = "open",
+    val adminReply: String = "",
+    val adminUid: String = "",
+    val adminName: String = "",
+    val createdAt: Timestamp = Timestamp.now(),
+    val respondedAt: Timestamp? = null
 )

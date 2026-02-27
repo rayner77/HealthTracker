@@ -34,10 +34,13 @@ fun CommunityScreen(navController: NavController) {
     val uid = FirebaseAuth.getInstance().currentUser?.uid.orEmpty()
     val db = remember { FirebaseFirestore.getInstance() }
 
-    var selectedTab by remember { mutableStateOf(0) } // 0 = Your Groups, 1 = Join Groups
+    var selectedTab by remember { mutableStateOf(0) } // 0 = Your Groups, 1 = Join Groups, 2 = People
 
     var allGroups by remember { mutableStateOf<List<GroupUi>>(emptyList()) }
     var joinedGroupIds by remember { mutableStateOf<Set<String>>(emptySet()) }
+
+    var peopleQuery by remember { mutableStateOf("") }
+    var peopleResults by remember { mutableStateOf<List<SocialUser>>(emptyList()) }
 
     // Create group dialog
     var showCreateDialog by remember { mutableStateOf(false) }
@@ -134,6 +137,36 @@ fun CommunityScreen(navController: NavController) {
             Log.e("CommunityScreen", "Join failed", e)
             onDone(false)
         }
+    }
+
+    fun loadPeople(query: String = "") {
+        val normalized = query.trim().lowercase()
+
+        val request = if (normalized.isBlank()) {
+            db.collection("users")
+                .orderBy("username")
+                .limit(20)
+        } else {
+            db.collection("users")
+                .orderBy("username")
+                .startAt(normalized)
+                .endAt(normalized + "\uf8ff")
+                .limit(20)
+        }
+
+        request.get()
+            .addOnSuccessListener { snapshot ->
+                peopleResults = snapshot.documents
+                    .mapNotNull { it.toObject(SocialUser::class.java) }
+                    .filter { it.uid != uid && it.role == "admin" }
+            }
+            .addOnFailureListener {
+                peopleResults = emptyList()
+            }
+    }
+
+    LaunchedEffect(Unit) {
+        loadPeople()
     }
 
     fun createGroup() {
@@ -255,49 +288,125 @@ fun CommunityScreen(navController: NavController) {
                     onClick = { selectedTab = 1 },
                     text = { Text("Join Groups") }
                 )
+                Tab(
+                    selected = selectedTab == 2,
+                    onClick = { selectedTab = 2 },
+                    text = { Text("People") }
+                )
             }
 
-            val list = if (selectedTab == 0) yourGroups else joinGroups
+            if (selectedTab == 2) {
+                UserDirectorySection(
+                    navController = navController,
+                    query = peopleQuery,
+                    onQueryChange = { peopleQuery = it },
+                    onSearch = { loadPeople(peopleQuery) },
+                    users = peopleResults
+                )
+            } else {
+                val list = if (selectedTab == 0) yourGroups else joinGroups
 
-            LazyColumn(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(16.dp),
-                verticalArrangement = Arrangement.spacedBy(12.dp)
-            ) {
-                items(list) { g ->
-                    val isJoined = joinedGroupIds.contains(g.id) || g.createdBy == uid
+                LazyColumn(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    items(list) { g ->
+                        val isJoined = joinedGroupIds.contains(g.id) || g.createdBy == uid
 
-                    Card(Modifier.fillMaxWidth()) {
-                        Column(Modifier.padding(16.dp)) {
-                            Text(
-                                g.name,
-                                style = MaterialTheme.typography.titleMedium,
-                                fontWeight = FontWeight.SemiBold
-                            )
+                        Card(Modifier.fillMaxWidth()) {
+                            Column(Modifier.padding(16.dp)) {
+                                Text(
+                                    g.name,
+                                    style = MaterialTheme.typography.titleMedium,
+                                    fontWeight = FontWeight.SemiBold
+                                )
 
-                            if (g.description.isNotBlank()) {
-                                Spacer(Modifier.height(4.dp))
-                                Text(g.description)
-                            }
+                                if (g.description.isNotBlank()) {
+                                    Spacer(Modifier.height(4.dp))
+                                    Text(g.description)
+                                }
 
-                            Spacer(Modifier.height(8.dp))
-                            Text("Members: ${g.memberCount}", style = MaterialTheme.typography.bodySmall)
+                                Spacer(Modifier.height(8.dp))
+                                Text("Members: ${g.memberCount}", style = MaterialTheme.typography.bodySmall)
 
-                            Spacer(Modifier.height(12.dp))
-                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                Button(onClick = {
-                                    if (isJoined) {
-                                        navController.navigate("community_group/${g.id}")
-                                    } else {
-                                        joinGroup(g.id) { ok ->
-                                            if (ok) navController.navigate("community_group/${g.id}")
+                                Spacer(Modifier.height(12.dp))
+                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    Button(onClick = {
+                                        if (isJoined) {
+                                            navController.navigate("community_group/${g.id}")
+                                        } else {
+                                            joinGroup(g.id) { ok ->
+                                                if (ok) navController.navigate("community_group/${g.id}")
+                                            }
                                         }
+                                    }) {
+                                        Text(if (isJoined) "Open" else "Join")
                                     }
-                                }) {
-                                    Text(if (isJoined) "Open" else "Join")
                                 }
                             }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+
+@Composable
+fun UserDirectorySection(
+    navController: NavController,
+    query: String,
+    onQueryChange: (String) -> Unit,
+    onSearch: () -> Unit,
+    users: List<SocialUser>
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(16.dp)
+    ) {
+        OutlinedTextField(
+            value = query,
+            onValueChange = onQueryChange,
+            modifier = Modifier.fillMaxWidth(),
+            label = { Text("Search by username") }
+        )
+
+        Spacer(modifier = Modifier.height(8.dp))
+
+        Button(
+            onClick = onSearch,
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Text("Search")
+        }
+
+        Spacer(modifier = Modifier.height(16.dp))
+
+        LazyColumn(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            items(users) { person ->
+                Card(modifier = Modifier.fillMaxWidth()) {
+                    Column(modifier = Modifier.padding(16.dp)) {
+                        Text(
+                            text = person.name,
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Text("@${person.username}")
+                        Text("Role: ${person.role}")
+                        Text("Expertise: ${person.expertise}")
+
+                        Spacer(modifier = Modifier.height(12.dp))
+
+                        Button(
+                            onClick = {
+                                navController.navigate("user_profile/${person.uid}")
+                            }
+                        ) {
+                            Text("View Profile")
                         }
                     }
                 }

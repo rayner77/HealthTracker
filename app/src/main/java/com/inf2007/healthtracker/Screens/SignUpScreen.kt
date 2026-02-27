@@ -67,6 +67,7 @@ import com.google.firebase.firestore.SetOptions
 import com.inf2007.healthtracker.ui.theme.Primary
 import com.inf2007.healthtracker.ui.theme.Tertiary
 import com.inf2007.healthtracker.ui.theme.Unfocused
+import java.util.Locale
 
 @Composable
 fun SignUpScreen(
@@ -435,13 +436,19 @@ fun SignUpScreen(
                                     isLoading = false
                                     if (task.isSuccessful) {
                                         val user = task.result?.user
+                                        val generatedUsername = email.substringBefore("@").trim().lowercase(Locale.ROOT)
+
                                         val userData = hashMapOf(
                                             "name" to name,
                                             "uid" to user?.uid,
                                             "email" to email,
-                                            "phone" to phone,
-                                            "friendIds" to emptyList<String>()
+
                                             // Don't store password in Firestore for security
+                                            "phone" to phone,
+                                            "username" to generatedUsername,
+                                            "role" to "user",
+                                            "expertise" to "Community Member",
+                                            "friendIds" to emptyList<String>()
                                         )
                                         FirebaseFirestore.getInstance().collection("users")
                                             .document(user?.uid ?: "")

@@ -1,22 +1,23 @@
 package com.inf2007.healthtracker
+
 import androidx.navigation.NavType
 import androidx.compose.runtime.Composable
 import androidx.navigation.NavGraphBuilder
 import androidx.navigation.NavHostController
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
-import androidx.navigation.navArgument
 import androidx.navigation.navigation
+import androidx.navigation.navArgument
+import com.inf2007.healthtracker.Screens.LoginScreen
+import com.inf2007.healthtracker.Screens.SignUpScreen
 import com.google.firebase.auth.FirebaseUser
-import com.inf2007.healthtracker.Screens.ActiveRecordingScreen
 import com.inf2007.healthtracker.Screens.CaptureFoodScreen
 import com.inf2007.healthtracker.Screens.DashboardScreen
-import com.inf2007.healthtracker.Screens.HistoryScreen
-import com.inf2007.healthtracker.Screens.LoginScreen
 import com.inf2007.healthtracker.Screens.MealPlanHistoryDetailScreen
 import com.inf2007.healthtracker.Screens.MealPlanHistoryScreen
 import com.inf2007.healthtracker.Screens.MealRecommendationScreen
 import com.inf2007.healthtracker.Screens.ProfileScreen
+import com.inf2007.healthtracker.Screens.HistoryScreen
 import com.inf2007.healthtracker.Screens.SignUpScreen
 import com.inf2007.healthtracker.Screens.ChatScreen
 import com.inf2007.healthtracker.Screens.RecordScreen
@@ -24,6 +25,7 @@ import com.inf2007.healthtracker.Screens.SocialUser
 import com.inf2007.healthtracker.Screens.SocialScreen
 import com.inf2007.healthtracker.Screens.CommunityScreen
 import com.inf2007.healthtracker.Screens.CommunityGroupScreen
+import com.inf2007.healthtracker.Screens.UserProfileScreen
 
 @Composable
 fun NavGraph(
@@ -43,6 +45,7 @@ fun NavGraphBuilder.authGraph(navController: NavHostController) {
     navigation(startDestination = "login_screen", route = "auth_graph") {
         composable("login_screen") { LoginScreen(navController) }
         composable("signup_screen") { SignUpScreen(navController) }
+        composable("dashboard_screen") { DashboardScreen(navController) }
     }
 }
 
@@ -50,20 +53,6 @@ fun NavGraphBuilder.mainGraph(navController: NavHostController, user: FirebaseUs
     navigation(startDestination = "dashboard_screen", route = "main_graph") {
 
         composable("profile_screen") { ProfileScreen(navController) }
-
-        composable("record_screen") { RecordScreen(navController) }
-
-        composable(
-            route = "activity_recording_screen/{activityType}"
-        ) { backStackEntry ->
-            val activityType =
-                backStackEntry.arguments?.getString("activityType") ?: "Running"
-
-            ActiveRecordingScreen(
-                navController = navController,
-                activityType = activityType
-            )
-        }
 
         composable("dashboard_screen") { DashboardScreen(navController) }
 
@@ -87,6 +76,16 @@ fun NavGraphBuilder.mainGraph(navController: NavHostController, user: FirebaseUs
         }
 
         composable(
+            route = "user_profile/{userId}",
+            arguments = listOf(
+                navArgument("userId") { type = NavType.StringType }
+            )
+        ) { backStackEntry ->
+            val userId = backStackEntry.arguments?.getString("userId") ?: ""
+            UserProfileScreen(navController = navController, userId = userId)
+        }
+
+        composable(
             route = "chat_screen/{friendId}/{friendName}",
             arguments = listOf(
                 navArgument("friendId") { type = NavType.StringType },
@@ -97,7 +96,6 @@ fun NavGraphBuilder.mainGraph(navController: NavHostController, user: FirebaseUs
             val friendName = backStackEntry.arguments?.getString("friendName") ?: ""
             ChatScreen(navController, friendId, friendName)
         }
-
 
         composable(
             route = "meal_recommendation_screen/{userId}",
@@ -112,7 +110,5 @@ fun NavGraphBuilder.mainGraph(navController: NavHostController, user: FirebaseUs
 
             MealPlanHistoryDetailScreen(navController, uid, timestamp)
         }
-
-
     }
 }

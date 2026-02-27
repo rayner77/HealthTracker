@@ -584,99 +584,6 @@ fun DashboardScreen(
 
             Spacer(modifier = Modifier.height(16.dp))
 
-            if (userRole == "admin") {
-                Text(
-                    text = "Support Inbox",
-                    style = MaterialTheme.typography.titleLarge,
-                    textAlign = TextAlign.Center
-                )
-
-                if (supportTickets.isEmpty()) {
-                    Text("No support tickets yet.")
-                } else {
-                    Column(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalArrangement = Arrangement.spacedBy(12.dp)
-                    ) {
-                        supportTickets.forEach { ticket ->
-                            Card(modifier = Modifier.fillMaxWidth()) {
-                                Column(modifier = Modifier.padding(16.dp)) {
-                                    Text(ticket.title, fontWeight = FontWeight.Bold)
-                                    Text("From: ${ticket.userName} (${ticket.userEmail})")
-
-                                    Spacer(modifier = Modifier.height(8.dp))
-                                    Text(ticket.description)
-
-                                    Spacer(modifier = Modifier.height(12.dp))
-
-                                    if (ticket.adminReply.isNotBlank()) {
-                                        Text("Reply: ${ticket.adminReply}")
-                                        Text("Status: ${ticket.status}")
-                                    } else {
-                                        OutlinedTextField(
-                                            value = replyDrafts[ticket.id].orEmpty(),
-                                            onValueChange = { replyDrafts[ticket.id] = it },
-                                            label = { Text("Reply") },
-                                            modifier = Modifier.fillMaxWidth()
-                                        )
-
-                                        Spacer(modifier = Modifier.height(8.dp))
-
-                                        Button(
-                                            onClick = {
-                                                val reply = replyDrafts[ticket.id].orEmpty()
-                                                replyToTicket(ticket.id, reply)
-                                                replyDrafts[ticket.id] = ""
-                                            }
-                                        ) {
-                                            Text("Send Reply")
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            } else {
-                Button(
-                    onClick = { showBugDialog = true },
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Text("Report a Bug / Contact Support")
-                }
-
-                if (supportTickets.isNotEmpty()) {
-                    Text(
-                        text = "My Support Requests",
-                        style = MaterialTheme.typography.titleLarge,
-                        textAlign = TextAlign.Center
-                    )
-
-                    Column(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalArrangement = Arrangement.spacedBy(12.dp)
-                    ) {
-                        supportTickets.forEach { ticket ->
-                            Card(modifier = Modifier.fillMaxWidth()) {
-                                Column(modifier = Modifier.padding(16.dp)) {
-                                    Text(ticket.title, fontWeight = FontWeight.Bold)
-                                    Text(ticket.description)
-
-                                    Spacer(modifier = Modifier.height(8.dp))
-                                    Text("Status: ${ticket.status}")
-
-                                    if (ticket.adminReply.isNotBlank()) {
-                                        Spacer(modifier = Modifier.height(8.dp))
-                                        Text("Support Reply: ${ticket.adminReply}")
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-
-            Spacer(modifier = Modifier.height(16.dp))
 
             // Weekly Steps
             Text(
@@ -779,11 +686,98 @@ fun DashboardScreen(
 
             Spacer(modifier = Modifier.height(16.dp))
 
-            // AI Health Tips Section
-            AIHealthTipsCard(healthTips = healthTips, isLoading = isLoading)
+            if (userRole == "admin") {
+                Text(
+                    text = "Support Inbox",
+                    style = MaterialTheme.typography.titleLarge,
+                    textAlign = TextAlign.Center
+                )
 
+                if (supportTickets.isEmpty()) {
+                    Text("No support tickets yet.")
+                } else {
+                    Column(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        supportTickets.forEach { ticket ->
+                            Card(modifier = Modifier.fillMaxWidth()) {
+                                Column(modifier = Modifier.padding(16.dp)) {
+                                    Text(ticket.title, fontWeight = FontWeight.Bold)
+                                    Text("From: ${ticket.userName} (${ticket.userEmail})")
+
+                                    Spacer(modifier = Modifier.height(8.dp))
+                                    Text(ticket.description)
+
+                                    Spacer(modifier = Modifier.height(12.dp))
+
+                                    if (ticket.adminReply.isNotBlank()) {
+                                        Text("Reply: ${ticket.adminReply}")
+                                        Text("Status: ${ticket.status}")
+                                    } else {
+                                        OutlinedTextField(
+                                            value = replyDrafts[ticket.id].orEmpty(),
+                                            onValueChange = { replyDrafts[ticket.id] = it },
+                                            label = { Text("Reply") },
+                                            modifier = Modifier.fillMaxWidth()
+                                        )
+
+                                        Spacer(modifier = Modifier.height(8.dp))
+
+                                        Button(
+                                            onClick = {
+                                                val reply = replyDrafts[ticket.id].orEmpty()
+                                                replyToTicket(ticket.id, reply)
+                                                replyDrafts[ticket.id] = ""
+                                            }
+                                        ) {
+                                            Text("Send Reply")
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            } else {
+                Button(
+                    onClick = { showBugDialog = true },
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text("Report a Bug / Contact Support")
+                }
+
+                if (supportTickets.isNotEmpty()) {
+                    Text(
+                        text = "My Support Requests",
+                        style = MaterialTheme.typography.titleLarge,
+                        textAlign = TextAlign.Center
+                    )
+
+                    Column(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        supportTickets.forEach { ticket ->
+                            Card(modifier = Modifier.fillMaxWidth()) {
+                                Column(modifier = Modifier.padding(16.dp)) {
+                                    Text(ticket.title, fontWeight = FontWeight.Bold)
+                                    Text(ticket.description)
+
+                                    Spacer(modifier = Modifier.height(8.dp))
+                                    Text("Status: ${ticket.status}")
+
+                                    if (ticket.adminReply.isNotBlank()) {
+                                        Spacer(modifier = Modifier.height(8.dp))
+                                        Text("Support Reply: ${ticket.adminReply}")
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
             Spacer(modifier = Modifier.height(16.dp))
-
         }
     }
 }

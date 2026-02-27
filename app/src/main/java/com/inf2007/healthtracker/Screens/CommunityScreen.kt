@@ -158,7 +158,7 @@ fun CommunityScreen(navController: NavController) {
             .addOnSuccessListener { snapshot ->
                 peopleResults = snapshot.documents
                     .mapNotNull { it.toObject(SocialUser::class.java) }
-                    .filter { it.uid != uid && it.role == "admin" }
+                    .filter { it.uid != uid }
             }
             .addOnFailureListener {
                 peopleResults = emptyList()

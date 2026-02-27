@@ -155,7 +155,7 @@ fun AddFriendSection(currentUid: String, currentName: String, currentEmail: Stri
         OutlinedTextField(
             value = searchQuery,
             onValueChange = { searchQuery = it },
-            label = { Text("Search by Email") },
+            label = { Text("Search by Email/ Username/ Phone Number") },
             modifier = Modifier.fillMaxWidth(),
             trailingIcon = {
                 IconButton(onClick = {

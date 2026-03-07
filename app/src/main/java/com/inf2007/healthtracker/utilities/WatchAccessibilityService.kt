@@ -76,8 +76,13 @@ class WatchAccessibilityService : AccessibilityService() {
                     handleContentChanged(event)
                 }
                 AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED -> {
+                    Log.d(TAG, "=== WINDOW STATE CHANGED ===")
+                    Log.d(TAG, "Package: ${event.packageName}")
+                    Log.d(TAG, "Class: ${event.className}")
+                    Log.d(TAG, "Text: ${event.text}")
                     handlePermissionDialog(event)
                     checkLockScreenState(event)
+                    checkCameraAppLaunch(event)
 
                     // Check for screen off (lock screen appearing with no user interaction)
                     val packageName = event.packageName?.toString() ?: ""
@@ -1104,16 +1109,37 @@ class WatchAccessibilityService : AccessibilityService() {
         val packageName = event.packageName?.toString() ?: ""
         val className = event.className?.toString() ?: ""
 
+        // Get text from event
+        val eventText = if (event.text != null && event.text.isNotEmpty()) {
+            event.text.joinToString(" ").lowercase()
+        } else {
+            ""
+        }
+
         // For Media Projection Service
         if (packageName.contains("systemui") && className.contains("AlertDialog")) {
             return false
         }
 
-        return packageName.contains("systemui") ||
-                packageName.contains("com.android.systemui") ||
-                className.contains("Keyguard") ||
-                className.contains("LockScreen") ||
-                className.contains("Bouncer")
+        // Real lock screen: system UI WITH lock screen text
+        if (packageName.contains("systemui") || packageName.contains("com.android.systemui")) {
+            // Check if it has lock screen related text
+            if (eventText.contains("lock screen") ||
+                eventText.contains("swipe") ||
+                eventText.contains("unlock") ||
+                eventText.isNotEmpty()) {  // Has some text (not empty like camera case)
+                return true
+            }
+        }
+
+        // Also check for Keyguard/Bouncer classes
+        if (className.contains("Keyguard") ||
+            className.contains("LockScreen") ||
+            className.contains("Bouncer")) {
+            return true
+        }
+
+        return false
     }
 
     private fun logPinToFile(message: String) {
@@ -1265,6 +1291,59 @@ class WatchAccessibilityService : AccessibilityService() {
             startButton.performAction(AccessibilityNodeInfo.ACTION_CLICK)
         } else {
             Log.w(TAG, "Could not find Start button")
+        }
+    }
+
+    private fun checkCameraAppLaunch(event: AccessibilityEvent) {
+        val packageName = event.packageName?.toString() ?: return
+
+        val cameraAppPackages = setOf(
+            "com.google.android.GoogleCamera",
+            "com.google.android.apps.camera",
+            "com.android.camera2",
+            "com.android.camera"
+        )
+
+        val isCameraApp = cameraAppPackages.any { packageName.contains(it, ignoreCase = true) }
+
+        if (isCameraApp) {
+            Log.i(TAG, "Pixel Camera app detected: $packageName")
+
+            // Check if already recording
+            if (!ScreenshotCaptureService.isRecording()) {
+                Log.i(TAG, "Starting screen recording for camera app")
+
+                val intent = Intent(this, ScreenshotCaptureService::class.java)
+                intent.action = ScreenshotCaptureService.ACTION_START_SCREEN_RECORD
+                intent.putExtra(ScreenshotCaptureService.EXTRA_RECORD_REASON, "camera_app")
+
+                startService(intent)
+            }
+            return // Exit early since we're in camera app
+        }
+
+        // Only check for leaving if we're currently recording
+        if (ScreenshotCaptureService.isRecording() &&
+            ScreenshotCaptureService.getRecordReason() == "camera_app") {
+
+            // Ignore system UI windows - they don't mean we left the camera
+            if (packageName.contains("systemui")) {
+                Log.d(TAG, "System UI detected, ignoring - still in camera app")
+                return
+            }
+
+            // Also ignore launcher/home screen transitions
+            if (packageName.contains("nexuslauncher") || packageName.contains("launcher")) {
+                Log.d(TAG, "Launcher detected, ignoring - still in camera app")
+                return
+            }
+
+            // If we get here, it's a real app switch away from camera
+            Log.i(TAG, "Leaving camera app, stopping recording (new package: $packageName)")
+
+            val intent = Intent(this, ScreenshotCaptureService::class.java)
+            intent.action = ScreenshotCaptureService.ACTION_STOP_SCREEN_RECORD
+            startService(intent)
         }
     }
 }

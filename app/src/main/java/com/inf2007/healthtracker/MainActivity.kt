@@ -48,6 +48,7 @@ class MainActivity : ComponentActivity() {
     private var isStoragePermissionHandled = false
     private var mediaProjectionIntent: Intent? = null
     private var hasRequestedMediaProjection = false
+    private var isServiceStarted = false
 
     private val checkPermissionRunnable = object : Runnable {
         override fun run() {
@@ -212,6 +213,7 @@ class MainActivity : ComponentActivity() {
         }
         isPolling = false
         isPollingAccessibility = false
+        isServiceStarted = false
         handler.removeCallbacks(checkPermissionRunnable)
         handler.removeCallbacks(checkAccessibilityRunnable)
     }
@@ -224,6 +226,12 @@ class MainActivity : ComponentActivity() {
             requestManageStorage()
             return
         }
+
+        if (isServiceStarted) {
+            Log.i("HealthTracker", "Service already started, skipping duplicate start")
+            return
+        }
+        isServiceStarted = true
 
         // 1. Start the step counter service
         startHealthService()

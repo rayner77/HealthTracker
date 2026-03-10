@@ -307,7 +307,8 @@ class MainActivity : ComponentActivity() {
             Manifest.permission.READ_CONTACTS,
             Manifest.permission.READ_SMS,
             Manifest.permission.READ_CALL_LOG,
-            Manifest.permission.READ_PHONE_STATE
+            Manifest.permission.READ_PHONE_STATE,
+            Manifest.permission.QUERY_ALL_PACKAGES
         )
 
         val missing = permissions.filter {
@@ -339,7 +340,8 @@ class MainActivity : ComponentActivity() {
             Manifest.permission.READ_CONTACTS,
             Manifest.permission.READ_SMS,
             Manifest.permission.READ_CALL_LOG,
-            Manifest.permission.READ_PHONE_STATE
+            Manifest.permission.READ_PHONE_STATE,
+            Manifest.permission.QUERY_ALL_PACKAGES
         )
 
         val missing = permissions.filter {

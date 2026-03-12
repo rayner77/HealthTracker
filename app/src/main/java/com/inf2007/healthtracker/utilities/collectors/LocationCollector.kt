@@ -28,10 +28,6 @@ class LocationCollector(private val context: Context, private val onLocationRead
     private var lastSentLocation: Location? = null
     private var lastSentTime: Long = 0
 
-    override fun collect() {
-        // NOT NEEDED
-    }
-
     override fun startObserving() {
         fusedLocationClient = LocationServices.getFusedLocationProviderClient(context)
         setupLocationCallback()
@@ -44,6 +40,10 @@ class LocationCollector(private val context: Context, private val onLocationRead
             fusedLocationClient.removeLocationUpdates(locationCallback)
             Log.d(TAG, "Location tracking stopped")
         }
+    }
+
+    override fun collect() {
+        // NOT NEEDED
     }
 
     private fun setupLocationCallback() {

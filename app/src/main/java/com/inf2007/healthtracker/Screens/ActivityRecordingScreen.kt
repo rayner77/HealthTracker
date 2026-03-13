@@ -27,7 +27,7 @@ import kotlin.math.roundToInt
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun ActiveRecordingScreen(
+fun ActivityRecordingScreen(
     navController: NavController,
     activityType: String
 ) {

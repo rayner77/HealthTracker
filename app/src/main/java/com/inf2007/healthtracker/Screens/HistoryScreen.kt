@@ -15,8 +15,8 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
@@ -35,7 +35,12 @@ import androidx.compose.material.icons.filled.CalendarMonth
 import androidx.compose.material.icons.filled.CalendarToday
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Fastfood
 import androidx.compose.material.icons.filled.FilterList
+import androidx.compose.material.icons.filled.LocalDining
+import androidx.compose.material.icons.filled.Restaurant
+import androidx.compose.material.icons.filled.RestaurantMenu
+import androidx.compose.material.icons.filled.Coffee
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.rememberDismissState
 import androidx.compose.material3.Button
@@ -62,39 +67,37 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.rememberDatePickerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.getValue
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.navigation.NavController
 import com.google.firebase.Timestamp
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.firestore.FirebaseFirestore
+import com.google.firebase.firestore.IgnoreExtraProperties
+import com.google.firebase.firestore.ListenerRegistration
 import com.google.firebase.firestore.Query
 import com.inf2007.healthtracker.utilities.BottomNavigationBar
 import java.text.SimpleDateFormat
-import java.util.Locale
-import java.util.Date
 import java.util.Calendar
-import androidx.compose.material.icons.filled.LocalDining
-import androidx.compose.material.icons.filled.Restaurant
-import androidx.compose.material.icons.filled.RestaurantMenu
-import androidx.compose.material.icons.filled.Coffee
-import androidx.compose.material.icons.filled.Fastfood
-import androidx.compose.ui.graphics.Brush
-import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.text.SpanStyle
-import androidx.compose.ui.text.buildAnnotatedString
-import androidx.compose.ui.text.withStyle
+import java.util.Date
+import java.util.Locale
+import androidx.compose.runtime.DisposableEffect
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalMaterialApi::class)
 @Composable
@@ -104,74 +107,62 @@ fun HistoryScreen(
 ) {
     var foodEntriesHistory by remember { mutableStateOf<List<FoodEntry2>>(emptyList()) }
     var stepsHistory by remember { mutableStateOf<List<StepsEntry>>(emptyList()) }
+    var activitiesHistory by remember { mutableStateOf<List<ActivityEntry>>(emptyList()) }
+
     var filteredFoodEntries by remember { mutableStateOf<List<FoodEntry2>>(emptyList()) }
     var filteredStepsHistory by remember { mutableStateOf<List<StepsEntry>>(emptyList()) }
+    var filteredActivitiesHistory by remember { mutableStateOf<List<ActivityEntry>>(emptyList()) }
+
     var searchQuery by remember { mutableStateOf("") }
     var isSearchActive by remember { mutableStateOf(false) }
     var isDateRangeSearch by remember { mutableStateOf(false) }
     var pendingDeleteItem by remember { mutableStateOf<Any?>(null) }
+    var screenError by remember { mutableStateOf("") }
+
+    var isFoodLoaded by remember { mutableStateOf(false) }
+    var isStepsLoaded by remember { mutableStateOf(false) }
+    var isActivitiesLoaded by remember { mutableStateOf(false) }
+
     val currentUser = FirebaseAuth.getInstance().currentUser
 
-    // Expanded states for date sections
     var expandedDates by remember { mutableStateOf(setOf<String>()) }
 
-    // Date range picker states
     var showStartDatePicker by remember { mutableStateOf(false) }
     var showEndDatePicker by remember { mutableStateOf(false) }
 
-    val startDatePickerState = rememberDatePickerState(initialSelectedDateMillis = null, initialDisplayMode = DisplayMode.Picker)
-    val endDatePickerState = rememberDatePickerState(initialSelectedDateMillis = null, initialDisplayMode = DisplayMode.Picker)
-
-    // Initialize with today and a week ago
-    val calendar = Calendar.getInstance()
-    val today = calendar.timeInMillis
-    calendar.add(Calendar.DAY_OF_YEAR, -7)
-    val weekAgo = calendar.timeInMillis
-
-    // Activities state variables
-    var activitiesHistory by remember { mutableStateOf<List<ActivityEntry>>(emptyList()) }
-    var filteredActivitiesHistory by remember { mutableStateOf<List<ActivityEntry>>(emptyList()) }
-
-    // Convert date picker states to actual dates
-    val startDate = startDatePickerState.selectedDateMillis?.let {
-        // Set start date to beginning of day (00:00:00)
-        val cal = Calendar.getInstance()
-        cal.timeInMillis = it
-        cal.set(Calendar.HOUR_OF_DAY, 0)
-        cal.set(Calendar.MINUTE, 0)
-        cal.set(Calendar.SECOND, 0)
-        cal.set(Calendar.MILLISECOND, 0)
-        Date(cal.timeInMillis)
-    }
-    val endDate = endDatePickerState.selectedDateMillis?.let {
-        // Set end date to end of day (23:59:59)
-        val cal = Calendar.getInstance()
-        cal.timeInMillis = it
-        cal.set(Calendar.HOUR_OF_DAY, 23)
-        cal.set(Calendar.MINUTE, 59)
-        cal.set(Calendar.SECOND, 59)
-        Date(cal.timeInMillis)
-    }
-
-    // Date formatter for display
-    val dateFormatter = SimpleDateFormat("MMM d, yyyy", Locale.getDefault())
-    val inputDateFormats = listOf(
-        SimpleDateFormat("MMM d yyyy", Locale.getDefault()),
-        SimpleDateFormat("d MMM yyyy", Locale.getDefault()),
-        SimpleDateFormat("MMM d, yyyy", Locale.getDefault()),
-        SimpleDateFormat("d MMM, yyyy", Locale.getDefault()),
-        SimpleDateFormat("d MMM", Locale.getDefault()),
-        SimpleDateFormat("MMMM d yyyy", Locale.getDefault()),
-        SimpleDateFormat("d MMMM yyyy", Locale.getDefault()),
-        SimpleDateFormat("MMMM d, yyyy", Locale.getDefault()),
-        SimpleDateFormat("d MMMM, yyyy", Locale.getDefault())
+    val startDatePickerState = rememberDatePickerState(
+        initialSelectedDateMillis = null,
+        initialDisplayMode = DisplayMode.Picker
+    )
+    val endDatePickerState = rememberDatePickerState(
+        initialSelectedDateMillis = null,
+        initialDisplayMode = DisplayMode.Picker
     )
 
-    // Function to filter the history entries based on search mode
+    val dateFormatter = remember { SimpleDateFormat("MMM d, yyyy", Locale.getDefault()) }
+
+    val startDate = startDatePickerState.selectedDateMillis?.let {
+        Calendar.getInstance().apply {
+            timeInMillis = it
+            set(Calendar.HOUR_OF_DAY, 0)
+            set(Calendar.MINUTE, 0)
+            set(Calendar.SECOND, 0)
+            set(Calendar.MILLISECOND, 0)
+        }.time
+    }
+
+    val endDate = endDatePickerState.selectedDateMillis?.let {
+        Calendar.getInstance().apply {
+            timeInMillis = it
+            set(Calendar.HOUR_OF_DAY, 23)
+            set(Calendar.MINUTE, 59)
+            set(Calendar.SECOND, 59)
+            set(Calendar.MILLISECOND, 999)
+        }.time
+    }
+
     fun filterHistoryEntries() {
-
         if (isDateRangeSearch && startDate != null && endDate != null) {
-
             filteredFoodEntries = foodEntriesHistory.filter {
                 it.timestamp?.toDate()?.let { d -> d in startDate..endDate } == true
             }
@@ -183,9 +174,7 @@ fun HistoryScreen(
             filteredActivitiesHistory = activitiesHistory.filter {
                 it.startTime?.toDate()?.let { d -> d in startDate..endDate } == true
             }
-
         } else if (searchQuery.isNotBlank()) {
-
             val query = searchQuery.lowercase()
 
             filteredFoodEntries = foodEntriesHistory.filter {
@@ -205,7 +194,6 @@ fun HistoryScreen(
                     dateFormatter.format(d).lowercase().contains(query)
                 } == true
             }
-
         } else {
             filteredFoodEntries = foodEntriesHistory
             filteredStepsHistory = stepsHistory
@@ -214,94 +202,116 @@ fun HistoryScreen(
     }
 
     fun clearDateRangeFilter() {
-        // Reset the DatePicker states to empty (null)
         startDatePickerState.selectedDateMillis = null
         endDatePickerState.selectedDateMillis = null
-
-        // Reset search states and criteria
         isDateRangeSearch = false
         searchQuery = ""
-
-        // Reset filtered lists to show all entries
-        filteredFoodEntries = foodEntriesHistory
-        filteredStepsHistory = stepsHistory
-        filteredActivitiesHistory = activitiesHistory
+        filterHistoryEntries()
     }
 
-    LaunchedEffect(Unit) {
-        currentUser?.let {
-            // Fetch Food Entries from Firestore
-            FirebaseFirestore.getInstance().collection("foodEntries")
-                .whereEqualTo("userId", it.uid)
+    LaunchedEffect(
+        foodEntriesHistory,
+        stepsHistory,
+        activitiesHistory,
+        searchQuery,
+        isDateRangeSearch,
+        startDatePickerState.selectedDateMillis,
+        endDatePickerState.selectedDateMillis
+    ) {
+        filterHistoryEntries()
+    }
+
+    DisposableEffect(currentUser?.uid) {
+        if (currentUser == null) {
+            isFoodLoaded = true
+            isStepsLoaded = true
+            isActivitiesLoaded = true
+            screenError = "You must be logged in to view history."
+            onDispose { }
+        } else {
+            val db = FirebaseFirestore.getInstance()
+            val registrations = mutableListOf<ListenerRegistration>()
+
+            screenError = ""
+
+            val foodRegistration = db.collection("foodEntries")
+                .whereEqualTo("userId", currentUser.uid)
                 .orderBy("dateString", Query.Direction.DESCENDING)
                 .addSnapshotListener { snapshot, error ->
+                    isFoodLoaded = true
+
                     if (error != null) {
-                        Log.e("HistoryScreen", "Error fetching food entries: ${error.message}")
+                        Log.e("HistoryScreen", "Error fetching food entries", error)
+                        screenError = "Failed to load some history data."
                         return@addSnapshotListener
                     }
-                    snapshot?.let { snap ->
-                        foodEntriesHistory = snap.documents.mapNotNull { doc ->
-                            try {
-                                doc.toObject(FoodEntry2::class.java)?.copy(id = doc.id)
-                            } catch (e: Exception) {
-                                Log.e("HistoryScreen", "Error parsing food entry: ${e.message}")
-                                null
-                            }
+
+                    foodEntriesHistory = snapshot?.documents?.mapNotNull { doc ->
+                        try {
+                            doc.toObject(FoodEntry2::class.java)?.copy(id = doc.id)
+                        } catch (e: Exception) {
+                            Log.e("HistoryScreen", "Error parsing food entry", e)
+                            null
                         }
-                        filterHistoryEntries()
-                    }
+                    }.orEmpty()
                 }
 
-            // Fetch Steps History from Firestore
-            FirebaseFirestore.getInstance().collection("steps")
-                .whereEqualTo("userId", it.uid)
+            registrations.add(foodRegistration)
+
+            val stepsRegistration = db.collection("steps")
+                .whereEqualTo("userId", currentUser.uid)
                 .orderBy("dateString", Query.Direction.DESCENDING)
                 .addSnapshotListener { snapshot, error ->
+                    isStepsLoaded = true
+
                     if (error != null) {
-                        Log.e("HistoryScreen", "Error fetching steps entries: ${error.message}")
+                        Log.e("HistoryScreen", "Error fetching steps entries", error)
+                        screenError = "Failed to load some history data."
                         return@addSnapshotListener
                     }
-                    snapshot?.let { snap ->
-                        stepsHistory = snap.documents.mapNotNull { doc ->
-                            try {
-                                doc.toObject(StepsEntry::class.java)?.copy(id = doc.id)
-                            } catch (e: Exception) {
-                                Log.e("HistoryScreen", "Error parsing steps entry: ${e.message}")
-                                null
-                            }
+
+                    stepsHistory = snapshot?.documents?.mapNotNull { doc ->
+                        try {
+                            doc.toObject(StepsEntry::class.java)?.copy(id = doc.id)
+                        } catch (e: Exception) {
+                            Log.e("HistoryScreen", "Error parsing steps entry", e)
+                            null
                         }
-                        // Sort stepsHistory locally (just in case it's not sorted properly)
-                        stepsHistory = stepsHistory.sortedByDescending { it.timestamp?.toDate() }
-                        filterHistoryEntries()
-                    }
+                    }.orEmpty().sortedByDescending { it.timestamp?.toDate() }
                 }
 
-            FirebaseFirestore.getInstance().collection("activities")
-                .whereEqualTo("userId", it.uid)
+            registrations.add(stepsRegistration)
+
+            val activitiesRegistration = db.collection("activities")
+                .whereEqualTo("userId", currentUser.uid)
                 .orderBy("createdAt", Query.Direction.DESCENDING)
                 .addSnapshotListener { snapshot, error ->
+                    isActivitiesLoaded = true
+
                     if (error != null) {
-                        Log.e("HistoryScreen", "Error fetching activities: ${error.message}")
+                        Log.e("HistoryScreen", "Error fetching activities", error)
+                        screenError = "Failed to load some history data."
                         return@addSnapshotListener
                     }
 
-                    snapshot?.let { snap ->
-                        activitiesHistory = snap.documents.mapNotNull { doc ->
-                            try {
-                                doc.toObject(ActivityEntry::class.java)?.copy(id = doc.id)
-                            } catch (e: Exception) {
-                                Log.e("HistoryScreen", "Activity parse error", e)
-                                null
-                            }
+                    activitiesHistory = snapshot?.documents?.mapNotNull { doc ->
+                        try {
+                            doc.toObject(ActivityEntry::class.java)?.copy(id = doc.id)
+                        } catch (e: Exception) {
+                            Log.e("HistoryScreen", "Activity parse error", e)
+                            null
                         }
-                        filteredActivitiesHistory = activitiesHistory
-                    }
+                    }.orEmpty()
                 }
 
+            registrations.add(activitiesRegistration)
+
+            onDispose {
+                registrations.forEach { it.remove() }
+            }
         }
     }
 
-    // Date picker dialog for start date
     if (showStartDatePicker) {
         DatePickerDialog(
             onDismissRequest = { showStartDatePicker = false },
@@ -323,7 +333,6 @@ fun HistoryScreen(
         }
     }
 
-    // Date picker dialog for end date
     if (showEndDatePicker) {
         DatePickerDialog(
             onDismissRequest = { showEndDatePicker = false },
@@ -345,6 +354,18 @@ fun HistoryScreen(
         }
     }
 
+    val isInitialLoading = !isFoodLoaded || !isStepsLoaded || !isActivitiesLoaded
+
+    val allHistoryEmpty =
+        foodEntriesHistory.isEmpty() &&
+                stepsHistory.isEmpty() &&
+                activitiesHistory.isEmpty()
+
+    val allFilteredEmpty =
+        filteredFoodEntries.isEmpty() &&
+                filteredStepsHistory.isEmpty() &&
+                filteredActivitiesHistory.isEmpty()
+
     Scaffold(
         topBar = {
             TopAppBar(
@@ -361,144 +382,183 @@ fun HistoryScreen(
             )
         },
         bottomBar = { BottomNavigationBar(navController) },
-        containerColor = MaterialTheme.colorScheme.background,
-        content = { paddingValues ->
-            Column(
-                modifier = modifier
-                    .fillMaxSize()
-                    .padding(paddingValues)
-            ) {
-                // Show search options when search is active
-                if (isSearchActive) {
-                    Column(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(16.dp)
-                    ) {
-                        // Search type toggle
-                        SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
-                            SegmentedButton(
-                                selected = !isDateRangeSearch,
-                                onClick = {
-                                    isDateRangeSearch = false
-                                    filterHistoryEntries()
-                                },
-                                shape = SegmentedButtonDefaults.itemShape(index = 0, count = 2),
-                            ) {
-                                Text("Single Date")
-                            }
-                            SegmentedButton(
-                                selected = isDateRangeSearch,
-                                onClick = {
-                                    isDateRangeSearch = true
-                                    filterHistoryEntries()
-                                },
-                                shape = SegmentedButtonDefaults.itemShape(index = 1, count = 2),
-                            ) {
-                                Text("Date Range")
-                            }
+        containerColor = MaterialTheme.colorScheme.background
+    ) { paddingValues ->
+        Column(
+            modifier = modifier
+                .fillMaxSize()
+                .padding(paddingValues)
+        ) {
+            if (isSearchActive) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(16.dp)
+                ) {
+                    SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
+                        SegmentedButton(
+                            selected = !isDateRangeSearch,
+                            onClick = {
+                                isDateRangeSearch = false
+                                filterHistoryEntries()
+                            },
+                            shape = SegmentedButtonDefaults.itemShape(index = 0, count = 2),
+                        ) {
+                            Text("Single Date")
+                        }
+                        SegmentedButton(
+                            selected = isDateRangeSearch,
+                            onClick = {
+                                isDateRangeSearch = true
+                                filterHistoryEntries()
+                            },
+                            shape = SegmentedButtonDefaults.itemShape(index = 1, count = 2),
+                        ) {
+                            Text("Date Range")
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(16.dp))
+
+                    if (isDateRangeSearch) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            OutlinedTextField(
+                                value = startDate?.let { dateFormatter.format(it) } ?: "",
+                                onValueChange = {},
+                                readOnly = true,
+                                label = { Text("Start Date") },
+                                modifier = Modifier.weight(1f),
+                                trailingIcon = {
+                                    IconButton(onClick = { showStartDatePicker = true }) {
+                                        Icon(Icons.Filled.CalendarMonth, "Select start date")
+                                    }
+                                }
+                            )
+
+                            Spacer(modifier = Modifier.width(16.dp))
+
+                            OutlinedTextField(
+                                value = endDate?.let { dateFormatter.format(it) } ?: "",
+                                onValueChange = {},
+                                readOnly = true,
+                                label = { Text("End Date") },
+                                modifier = Modifier.weight(1f),
+                                trailingIcon = {
+                                    IconButton(onClick = { showEndDatePicker = true }) {
+                                        Icon(Icons.Filled.CalendarMonth, "Select end date")
+                                    }
+                                }
+                            )
                         }
 
-                        Spacer(modifier = Modifier.height(16.dp))
+                        Spacer(modifier = Modifier.height(8.dp))
 
-                        if (isDateRangeSearch) {
-                            // Date range picker UI
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceBetween
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Button(
+                                onClick = { filterHistoryEntries() },
+                                modifier = Modifier.weight(1f)
                             ) {
-                                // Start date field
-                                OutlinedTextField(
-                                    value = startDate?.let { dateFormatter.format(it) } ?: "",
-                                    onValueChange = { },
-                                    readOnly = true,
-                                    label = { Text("Start Date") },
-                                    modifier = Modifier.weight(1f),
-                                    trailingIcon = {
-                                        IconButton(onClick = { showStartDatePicker = true }) {
-                                            Icon(Icons.Filled.CalendarMonth, "Select start date")
-                                        }
-                                    }
-                                )
-
-                                Spacer(modifier = Modifier.width(16.dp))
-
-                                // End date field
-                                OutlinedTextField(
-                                    value = endDate?.let { dateFormatter.format(it) } ?: "",
-                                    onValueChange = { },
-                                    readOnly = true,
-                                    label = { Text("End Date") },
-                                    modifier = Modifier.weight(1f),
-                                    trailingIcon = {
-                                        IconButton(onClick = { showEndDatePicker = true }) {
-                                            Icon(Icons.Filled.CalendarMonth, "Select end date")
-                                        }
-                                    }
-                                )
+                                Text("Apply Filter")
                             }
 
-                            Spacer(modifier = Modifier.height(8.dp))
-
-                            // Row for Apply and Clear buttons
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            Button(
+                                onClick = { clearDateRangeFilter() },
+                                modifier = Modifier.weight(1f),
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = MaterialTheme.colorScheme.secondary
+                                )
                             ) {
-                                // Apply filter button
-                                Button(
-                                    onClick = { filterHistoryEntries() },
-                                    modifier = Modifier.weight(1f)
-                                ) {
-                                    Text("Apply Filter")
-                                }
-
-                                // Clear filter button
-                                Button(
-                                    onClick = { clearDateRangeFilter() },
-                                    modifier = Modifier.weight(1f),
-                                    colors = ButtonDefaults.buttonColors(
-                                        containerColor = MaterialTheme.colorScheme.secondary
-                                    )
-                                ) {
-                                    Text("Clear Filter")
-                                }
+                                Text("Clear Filter")
                             }
-                        } else {
-                            // Single date search
-                            OutlinedTextField(
-                                value = searchQuery,
-                                onValueChange = { query ->
-                                    searchQuery = query
-                                    filterHistoryEntries()
-                                },
-                                label = { Text("Search by Date") },
-                                modifier = Modifier.fillMaxWidth(),
-                                singleLine = true,
-                                trailingIcon = {
-                                    if (searchQuery.isNotEmpty()) {
-                                        IconButton(onClick = {
-                                            searchQuery = ""
-                                            filterHistoryEntries()
-                                        }) {
-                                            Icon(
-                                                Icons.Filled.Close,
-                                                contentDescription = "Clear"
-                                            )
-                                        }
+                        }
+                    } else {
+                        OutlinedTextField(
+                            value = searchQuery,
+                            onValueChange = { query ->
+                                searchQuery = query
+                                filterHistoryEntries()
+                            },
+                            label = { Text("Search by Date") },
+                            modifier = Modifier.fillMaxWidth(),
+                            singleLine = true,
+                            trailingIcon = {
+                                if (searchQuery.isNotEmpty()) {
+                                    IconButton(onClick = {
+                                        searchQuery = ""
+                                        filterHistoryEntries()
+                                    }) {
+                                        Icon(
+                                            Icons.Filled.Close,
+                                            contentDescription = "Clear"
+                                        )
                                     }
                                 }
+                            }
+                        )
+                    }
+                }
+            }
+
+            if (screenError.isNotBlank()) {
+                Card(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 24.dp, vertical = 8.dp),
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.errorContainer
+                    )
+                ) {
+                    Text(
+                        text = screenError,
+                        modifier = Modifier.padding(16.dp),
+                        color = MaterialTheme.colorScheme.onErrorContainer
+                    )
+                }
+            }
+
+            when {
+                isInitialLoading -> {
+                    Box(
+                        modifier = Modifier.fillMaxSize(),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        CircularProgressIndicator()
+                    }
+                }
+
+                allHistoryEmpty -> {
+                    Box(
+                        modifier = Modifier.fillMaxSize(),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            Icon(
+                                imageVector = Icons.Filled.FilterList,
+                                contentDescription = "No history",
+                                modifier = Modifier.size(64.dp),
+                                tint = MaterialTheme.colorScheme.primary.copy(alpha = 0.6f)
+                            )
+                            Spacer(modifier = Modifier.height(16.dp))
+                            Text(
+                                "No history available yet.",
+                                style = MaterialTheme.typography.bodyLarge,
+                                textAlign = TextAlign.Center
                             )
                         }
                     }
                 }
 
-                if (foodEntriesHistory.isEmpty() && stepsHistory.isEmpty()) {
-                    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                        CircularProgressIndicator()
-                    }
-                } else if (filteredFoodEntries.isEmpty() && filteredStepsHistory.isEmpty()) {
-                    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                allFilteredEmpty -> {
+                    Box(
+                        modifier = Modifier.fillMaxSize(),
+                        contentAlignment = Alignment.Center
+                    ) {
                         Column(horizontalAlignment = Alignment.CenterHorizontally) {
                             Icon(
                                 imageVector = Icons.Filled.FilterList,
@@ -514,12 +574,12 @@ fun HistoryScreen(
                             )
                         }
                     }
-                } else {
-                    // Calculate the totals from the filtered lists
-                    val totalCaloriesfiltered = filteredFoodEntries.sumOf { it.caloricValue }
-                    val totalStepsfiltered = filteredStepsHistory.sumOf { it.steps }
+                }
 
-                    // Group food entries by date
+                else -> {
+                    val totalCaloriesFiltered = filteredFoodEntries.sumOf { it.caloricValue }
+                    val totalStepsFiltered = filteredStepsHistory.sumOf { it.steps }
+
                     val groupedFoodEntries = filteredFoodEntries.groupBy { entry ->
                         entry.timestamp?.toDate()?.let { dateFormatter.format(it) } ?: "No date"
                     }
@@ -530,17 +590,17 @@ fun HistoryScreen(
                             .padding(horizontal = 24.dp, vertical = 8.dp),
                         verticalArrangement = Arrangement.spacedBy(16.dp)
                     ) {
-                        // Show the totals at the top of the list
                         item {
-                            TotalCard(totalCaloriesfiltered, totalStepsfiltered)
+                            TotalCard(totalCaloriesFiltered, totalStepsFiltered)
                         }
 
-                        // Date range info when filter is active
                         if (isDateRangeSearch && startDate != null && endDate != null) {
                             item {
                                 Card(
                                     modifier = Modifier.fillMaxWidth(),
-                                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+                                    colors = CardDefaults.cardColors(
+                                        containerColor = MaterialTheme.colorScheme.surfaceVariant
+                                    )
                                 ) {
                                     Row(
                                         modifier = Modifier.padding(16.dp),
@@ -592,7 +652,6 @@ fun HistoryScreen(
                                 val totalCaloriesForDate = entries.sumOf { it.caloricValue }
 
                                 item {
-                                    // Date header with toggle functionality
                                     DateHeader(
                                         date = date,
                                         totalCalories = totalCaloriesForDate,
@@ -606,7 +665,6 @@ fun HistoryScreen(
                                         }
                                     )
 
-                                    // Animated visibility for entries under this date
                                     AnimatedVisibility(
                                         visible = isExpanded,
                                         enter = fadeIn(animationSpec = tween(200)) + expandVertically(),
@@ -614,7 +672,12 @@ fun HistoryScreen(
                                     ) {
                                         Column(
                                             verticalArrangement = Arrangement.spacedBy(8.dp),
-                                            modifier = Modifier.padding(start = 8.dp, end = 8.dp, top = 8.dp, bottom = 16.dp)
+                                            modifier = Modifier.padding(
+                                                start = 8.dp,
+                                                end = 8.dp,
+                                                top = 8.dp,
+                                                bottom = 16.dp
+                                            )
                                         ) {
                                             entries.forEach { entry ->
                                                 val dismissState = rememberDismissState(
@@ -622,7 +685,7 @@ fun HistoryScreen(
                                                         if (dismissValue == DismissValue.DismissedToStart) {
                                                             pendingDeleteItem = entry
                                                         }
-                                                        false // Don't auto-dismiss
+                                                        false
                                                     }
                                                 )
 
@@ -630,10 +693,13 @@ fun HistoryScreen(
                                                     state = dismissState,
                                                     directions = setOf(DismissDirection.EndToStart),
                                                     background = {
-                                                        val color = if (dismissState.targetValue == DismissValue.Default)
-                                                            MaterialTheme.colorScheme.surface
-                                                        else
-                                                            MaterialTheme.colorScheme.error
+                                                        val color =
+                                                            if (dismissState.targetValue == DismissValue.Default) {
+                                                                MaterialTheme.colorScheme.surface
+                                                            } else {
+                                                                MaterialTheme.colorScheme.error
+                                                            }
+
                                                         Box(
                                                             modifier = Modifier
                                                                 .fillMaxSize()
@@ -660,7 +726,6 @@ fun HistoryScreen(
                                     }
                                 }
 
-                                // When collapsed, show a summary line
                                 if (!isExpanded) {
                                     item {
                                         Text(
@@ -706,7 +771,7 @@ fun HistoryScreen(
                                         if (dismissValue == DismissValue.DismissedToStart) {
                                             pendingDeleteItem = entry
                                         }
-                                        false // Don't auto-dismiss
+                                        false
                                     }
                                 )
 
@@ -714,10 +779,13 @@ fun HistoryScreen(
                                     state = dismissState,
                                     directions = setOf(DismissDirection.EndToStart),
                                     background = {
-                                        val color = if (dismissState.targetValue == DismissValue.Default)
-                                            MaterialTheme.colorScheme.surface
-                                        else
-                                            MaterialTheme.colorScheme.error
+                                        val color =
+                                            if (dismissState.targetValue == DismissValue.Default) {
+                                                MaterialTheme.colorScheme.surface
+                                            } else {
+                                                MaterialTheme.colorScheme.error
+                                            }
+
                                         Box(
                                             modifier = Modifier
                                                 .fillMaxSize()
@@ -741,7 +809,6 @@ fun HistoryScreen(
                                 Spacer(modifier = Modifier.height(8.dp))
                             }
                         }
-                        /* ---------------- ACTIVITIES HISTORY ---------------- */
 
                         item {
                             Spacer(modifier = Modifier.height(24.dp))
@@ -774,52 +841,73 @@ fun HistoryScreen(
                                 Spacer(modifier = Modifier.height(8.dp))
                             }
                         }
-
                     }
                 }
             }
 
-            // Confirmation dialog for deletion
             pendingDeleteItem?.let { item ->
                 AlertDialog(
                     onDismissRequest = { pendingDeleteItem = null },
-                    title = { Text("Delete History Entry") },
-                    text = { Text("Are you sure you want to delete this entry?") },
+                    title = { androidx.compose.material.Text("Delete History Entry") },
+                    text = { androidx.compose.material.Text("Are you sure you want to delete this entry?") },
                     confirmButton = {
                         TextButton(
                             onClick = {
-                                if (item is FoodEntry2) {
-                                    FirebaseFirestore.getInstance().collection("foodEntries")
-                                        .document(item.id)
-                                        .delete()
-                                        .addOnSuccessListener {
-                                            foodEntriesHistory = foodEntriesHistory.filter { it.id != item.id }
-                                            filteredFoodEntries = filteredFoodEntries.filter { it.id != item.id }
-                                        }
-                                } else if (item is StepsEntry) {
-                                    FirebaseFirestore.getInstance().collection("steps")
-                                        .document(item.id)
-                                        .delete()
-                                        .addOnSuccessListener {
-                                            stepsHistory = stepsHistory.filter { it.id != item.id }
-                                            filteredStepsHistory = filteredStepsHistory.filter { it.id != item.id }
-                                        }
+                                val db = FirebaseFirestore.getInstance()
+
+                                when (item) {
+                                    is FoodEntry2 -> {
+                                        db.collection("foodEntries")
+                                            .document(item.id)
+                                            .delete()
+                                            .addOnSuccessListener {
+                                                foodEntriesHistory =
+                                                    foodEntriesHistory.filter { it.id != item.id }
+                                                filteredFoodEntries =
+                                                    filteredFoodEntries.filter { it.id != item.id }
+                                            }
+                                    }
+
+                                    is StepsEntry -> {
+                                        db.collection("steps")
+                                            .document(item.id)
+                                            .delete()
+                                            .addOnSuccessListener {
+                                                stepsHistory =
+                                                    stepsHistory.filter { it.id != item.id }
+                                                filteredStepsHistory =
+                                                    filteredStepsHistory.filter { it.id != item.id }
+                                            }
+                                    }
+
+                                    is ActivityEntry -> {
+                                        db.collection("activities")
+                                            .document(item.id)
+                                            .delete()
+                                            .addOnSuccessListener {
+                                                activitiesHistory =
+                                                    activitiesHistory.filter { it.id != item.id }
+                                                filteredActivitiesHistory =
+                                                    filteredActivitiesHistory.filter { it.id != item.id }
+                                            }
+                                    }
                                 }
+
                                 pendingDeleteItem = null
                             }
                         ) {
-                            Text("Delete")
+                            androidx.compose.material.Text("Delete")
                         }
                     },
                     dismissButton = {
                         TextButton(onClick = { pendingDeleteItem = null }) {
-                            Text("Cancel")
+                            androidx.compose.material.Text("Cancel")
                         }
                     }
                 )
             }
         }
-    )
+    }
 }
 
 @Composable
@@ -844,7 +932,6 @@ fun DateHeader(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.SpaceBetween
         ) {
-            // Date with icon
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Box(
                     modifier = Modifier
@@ -868,7 +955,6 @@ fun DateHeader(
                 )
             }
 
-            // Total calories for this date
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Icon(
                     imageVector = Icons.Filled.LocalDining,
@@ -890,7 +976,6 @@ fun DateHeader(
 
 @Composable
 fun ActivityHistoryCard(entry: ActivityEntry) {
-
     val formatter = remember {
         SimpleDateFormat("MMM d, yyyy • hh:mm a", Locale.getDefault())
     }
@@ -901,7 +986,6 @@ fun ActivityHistoryCard(entry: ActivityEntry) {
         elevation = CardDefaults.cardElevation(2.dp)
     ) {
         Column(Modifier.padding(16.dp)) {
-
             Text(entry.activityType, fontWeight = FontWeight.Bold)
 
             Spacer(Modifier.height(4.dp))
@@ -932,20 +1016,16 @@ fun ActivityHistoryCard(entry: ActivityEntry) {
     }
 }
 
-
 @Composable
 fun EnhancedFoodEntryCard(entry: FoodEntry2) {
     val dateTimeFormatter = SimpleDateFormat("hh:mm a", Locale.getDefault())
     val timeString = entry.timestamp?.toDate()?.let { dateTimeFormatter.format(it) } ?: "--:--"
-
-    // Determine the meal type icon based on time or name (this is just an example)
     val mealIcon = getMealIcon(entry)
 
-    // Determine color based on caloric value
     val caloricColor = when {
-        entry.caloricValue > 800 -> Color(0xFFE57373) // High calories - reddish
-        entry.caloricValue > 500 -> Color(0xFFFFB74D) // Medium calories - orange
-        else -> Color(0xFF81C784) // Low calories - greenish
+        entry.caloricValue > 800 -> Color(0xFFE57373)
+        entry.caloricValue > 500 -> Color(0xFFFFB74D)
+        else -> Color(0xFF81C784)
     }
 
     Card(
@@ -968,7 +1048,6 @@ fun EnhancedFoodEntryCard(entry: FoodEntry2) {
                 .padding(16.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            // Meal icon circle
             Box(
                 modifier = Modifier
                     .size(48.dp)
@@ -993,7 +1072,6 @@ fun EnhancedFoodEntryCard(entry: FoodEntry2) {
 
             Spacer(modifier = Modifier.width(16.dp))
 
-            // Food details
             Column(modifier = Modifier.weight(1f)) {
                 Text(
                     text = entry.foodName,
@@ -1006,7 +1084,6 @@ fun EnhancedFoodEntryCard(entry: FoodEntry2) {
 
                 Spacer(modifier = Modifier.height(4.dp))
 
-                // Time of entry
                 Text(
                     text = timeString,
                     style = MaterialTheme.typography.bodySmall,
@@ -1014,7 +1091,6 @@ fun EnhancedFoodEntryCard(entry: FoodEntry2) {
                 )
             }
 
-            // Calorie counter with background
             Box(
                 modifier = Modifier
                     .clip(RoundedCornerShape(12.dp))
@@ -1037,18 +1113,15 @@ fun EnhancedFoodEntryCard(entry: FoodEntry2) {
     }
 }
 
-// Helper function to determine meal icon based on entry
 fun getMealIcon(entry: FoodEntry2): ImageVector {
-    // This is just an example logic - you might want to enhance this
-    // based on actual meal type data if available
     val hour = entry.timestamp?.toDate()?.let {
         Calendar.getInstance().apply { time = it }.get(Calendar.HOUR_OF_DAY)
     } ?: 12
 
     return when {
-        hour in 5..10 -> Icons.Filled.Coffee  // Breakfast
-        hour in 11..14 -> Icons.Filled.Restaurant  // Lunch
-        hour in 15..21 -> Icons.Filled.Fastfood  // Dinner
+        hour in 5..10 -> Icons.Filled.Coffee
+        hour in 11..14 -> Icons.Filled.Restaurant
+        hour in 15..21 -> Icons.Filled.Fastfood
         else -> Icons.Filled.RestaurantMenu
     }
 }
@@ -1057,13 +1130,12 @@ fun getMealIcon(entry: FoodEntry2): ImageVector {
 fun StepsHistoryCard(entry: StepsEntry, dateFormatter: SimpleDateFormat) {
     val dateString = entry.timestamp?.toDate()?.let { dateFormatter.format(it) } ?: "No date"
 
-    // Determine color based on steps count
     val stepsColor = when {
-        entry.steps > 10000 -> Color(0xFF43A047) // Exceeds daily goal - green
-        entry.steps > 7500 -> Color(0xFF7CB342) // Almost at goal - light green
-        entry.steps > 5000 -> Color(0xFFFBC02D) // Halfway - yellow
-        entry.steps > 2500 -> Color(0xFFFB8C00) // Some progress - orange
-        else -> Color(0xFFE53935) // Little progress - red
+        entry.steps > 10000 -> Color(0xFF43A047)
+        entry.steps > 7500 -> Color(0xFF7CB342)
+        entry.steps > 5000 -> Color(0xFFFBC02D)
+        entry.steps > 2500 -> Color(0xFFFB8C00)
+        else -> Color(0xFFE53935)
     }
 
     Card(
@@ -1086,7 +1158,6 @@ fun StepsHistoryCard(entry: StepsEntry, dateFormatter: SimpleDateFormat) {
                 .padding(16.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            // Steps icon circle
             Box(
                 modifier = Modifier
                     .size(48.dp)
@@ -1111,7 +1182,6 @@ fun StepsHistoryCard(entry: StepsEntry, dateFormatter: SimpleDateFormat) {
 
             Spacer(modifier = Modifier.width(16.dp))
 
-            // Date and steps info
             Column(modifier = Modifier.weight(1f)) {
                 Text(
                     text = dateString,
@@ -1127,7 +1197,6 @@ fun StepsHistoryCard(entry: StepsEntry, dateFormatter: SimpleDateFormat) {
                 )
             }
 
-            // Steps value in a badge (replaces the progress indicator)
             Box(
                 modifier = Modifier
                     .clip(RoundedCornerShape(12.dp))
@@ -1170,14 +1239,12 @@ fun TotalCard(totalCalories: Int, totalSteps: Int) {
 
             Spacer(modifier = Modifier.height(16.dp))
 
-            // Row for Total Calories
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(vertical = 8.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                // Icon in circle
                 Box(
                     modifier = Modifier
                         .size(40.dp)
@@ -1216,14 +1283,12 @@ fun TotalCard(totalCalories: Int, totalSteps: Int) {
                 color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.1f)
             )
 
-            // Row for Total Steps
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(vertical = 8.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                // Icon in circle
                 Box(
                     modifier = Modifier
                         .size(40.dp)
@@ -1272,7 +1337,6 @@ fun SectionTitle(text: String) {
 
 fun Double.format(digits: Int) = "%.${digits}f".format(this)
 
-// Data classes for Firestore documents
 data class FoodEntry2(
     val id: String = "",
     val foodName: String = "",
@@ -1288,6 +1352,7 @@ data class StepsEntry(
     val userId: String = ""
 )
 
+@IgnoreExtraProperties
 data class ActivityEntry(
     val id: String = "",
     val activityType: String = "",
@@ -1295,7 +1360,8 @@ data class ActivityEntry(
     val endTime: Timestamp? = null,
     val durationMinutes: Long = 0,
     val distanceKm: Double = 0.0,
-    val averageSpeedKmh: Float = 0f,
+    val averageSpeedKmh: Double = 0.0,
     val caloriesBurned: Int = 0,
-    val userId: String = ""
+    val userId: String = "",
+    val createdAt: Timestamp? = null
 )

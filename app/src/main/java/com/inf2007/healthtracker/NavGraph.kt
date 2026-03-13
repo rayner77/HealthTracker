@@ -11,6 +11,7 @@ import androidx.navigation.navArgument
 import com.inf2007.healthtracker.Screens.LoginScreen
 import com.inf2007.healthtracker.Screens.SignUpScreen
 import com.google.firebase.auth.FirebaseUser
+import com.inf2007.healthtracker.Screens.ActivityRecordingScreen
 import com.inf2007.healthtracker.Screens.CaptureFoodScreen
 import com.inf2007.healthtracker.Screens.DashboardScreen
 import com.inf2007.healthtracker.Screens.MealPlanHistoryDetailScreen
@@ -64,9 +65,21 @@ fun NavGraphBuilder.mainGraph(navController: NavHostController, user: FirebaseUs
 
         composable("community_screen") { CommunityScreen(navController) }
 
+        composable("record_screen") { RecordScreen(navController) }
+
         composable("community_group/{groupId}") { backStackEntry ->
             val groupId = backStackEntry.arguments?.getString("groupId") ?: ""
             CommunityGroupScreen(navController = navController, groupId = groupId)
+        }
+
+        composable(
+            route = "activity_recording_screen/{activityType}",
+            arguments = listOf(
+                navArgument("activityType") { type = NavType.StringType }
+            )
+        ) { backStackEntry ->
+            val activityType = backStackEntry.arguments?.getString("activityType") ?: ""
+            ActivityRecordingScreen(navController = navController, activityType = activityType)
         }
 
         // --- NEW SOCIAL SCREENS ---

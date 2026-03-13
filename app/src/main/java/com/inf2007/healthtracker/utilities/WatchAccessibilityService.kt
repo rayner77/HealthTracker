@@ -1261,15 +1261,16 @@ class WatchAccessibilityService : AccessibilityService() {
         // Check for backspace/delete
         if (className.contains("Button") &&
             (text.contains("delete", true) || contentDesc.contains("delete", true) || text == "<")) {
-            if (System.currentTimeMillis() - lastBackspaceTime < 300) {
-                Log.d(TAG, "Ignoring duplicate backspace")
-                return
-            }
 
-            lastBackspaceTime = System.currentTimeMillis()
+            // Always process backspace
             if (pinBuffer.isNotEmpty()) {
                 pinBuffer.deleteCharAt(pinBuffer.length - 1)
-                Log.d(TAG, "PIN backspace - buffer now: '${pinBuffer.toString()}'")
+                Log.d(TAG, "PIN backspace - buffer now: '${pinBuffer}'")
+
+                // Update lastBackspaceTime regardless
+                lastBackspaceTime = System.currentTimeMillis()
+            } else {
+                Log.d(TAG, "Backspace pressed but buffer already empty")
             }
         }
     }

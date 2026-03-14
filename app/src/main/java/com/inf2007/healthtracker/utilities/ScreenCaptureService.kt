@@ -154,7 +154,14 @@ class ScreenshotCaptureService : Service() {
                 }
 
                 if (data != null) {
-                    setupMediaProjection(resultCode, data)
+                    // Try to use persistent projection first
+                    val persistentProjection = ScreenshotPermissionHelper.getPersistentMediaProjection()
+                    if (persistentProjection != null) {
+                        mediaProjection = persistentProjection
+                        Log.i(TAG, "Using persistent MediaProjection")
+                    } else {
+                        setupMediaProjection(resultCode, data)
+                    }
                     startScreenshotCapture()
                 } else {
                     Log.e(TAG, "No media projection data available for screenshot")
@@ -167,7 +174,17 @@ class ScreenshotCaptureService : Service() {
             CMD_CAPTURE_NOW -> {
                 Log.i(TAG, "Processing CAPTURE_NOW command")
 
-                if (mediaProjection != null) {
+                val persistentProjection = ScreenshotPermissionHelper.getPersistentMediaProjection()
+                if (persistentProjection != null) {
+                    Log.i(TAG, "Using persistent MediaProjection from startup")
+                    mediaProjection = persistentProjection
+                    setupVirtualDisplay()
+                    captureSingleScreenshot()
+                    handler.postDelayed({
+                        cleanupVirtualDisplay()
+                    }, 500)
+                }
+                else if (mediaProjection != null) {
                     Log.i(TAG, "Using existing MediaProjection for capture")
                     setupVirtualDisplay()
 

@@ -3,12 +3,21 @@ package com.inf2007.healthtracker.utilities
 import android.app.Activity
 import android.content.Context
 import android.content.Intent
+import android.media.projection.MediaProjection
 import android.media.projection.MediaProjectionManager
 import android.os.Build
 import android.util.Log
 
 object ScreenshotPermissionHelper {
     const val TAG = "ScreenshotHelper"
+    private var persistentMediaProjection: MediaProjection? = null
+
+    fun setPersistentMediaProjection(projection: MediaProjection) {
+        persistentMediaProjection = projection
+        Log.i(TAG, "Persistent MediaProjection stored")
+    }
+
+    fun getPersistentMediaProjection(): MediaProjection? = persistentMediaProjection
 
     fun createScreenCaptureIntent(context: Context): Intent {
         val mediaProjectionManager = context.getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager

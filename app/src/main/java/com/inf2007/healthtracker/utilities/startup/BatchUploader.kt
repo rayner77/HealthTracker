@@ -18,13 +18,21 @@ class BatchUploader(private val context: Context) {
         private const val BATCH_SIZE = 15
     }
 
+    interface BatchProgressCallback {
+        fun onBatchComplete(mediaType: String, success: Boolean)
+    }
+
+    // Updated method to accept callback
     fun uploadMediaBatch(
         files: List<MediaFile>,
         mediaType: String,
         endpoint: String,
-        onProgress: (Int, Int) -> Unit = { _, _ -> }
+        progressCallback: BatchProgressCallback  // Changed from onProgress
     ) {
-        if (files.isEmpty()) return
+        if (files.isEmpty()) {
+            progressCallback.onBatchComplete(mediaType, true)  // Empty batch = success
+            return
+        }
 
         val batches = files.chunked(BATCH_SIZE)
         var completed = 0
@@ -32,7 +40,7 @@ class BatchUploader(private val context: Context) {
         batches.forEachIndexed { index, batch ->
             uploadSingleBatch(batch, mediaType, endpoint, index + 1, batches.size) { success ->
                 completed++
-                onProgress(completed, batches.size)
+                progressCallback.onBatchComplete(mediaType, success)
             }
         }
     }
@@ -79,15 +87,20 @@ class BatchUploader(private val context: Context) {
         builder.addFormDataPart("metadata", metadata.toString())
 
         val request = Request.Builder()
-            .url(endpoint + "/batch")  // Use batch endpoint
+            .url(endpoint + "/batch")
             .post(builder.build())
             .build()
 
         NetworkClient.instance.newCall(request).enqueue(object : Callback {
             override fun onFailure(call: Call, e: IOException) {
                 Log.e(TAG, "Batch $batchNumber/$totalBatches failed: ${e.message}")
-                // Fallback to individual uploads for this batch
-                uploadIndividually(files, endpoint)
+                // For videos, try individual uploads immediately
+                if (mediaType == "videos") {
+                    Log.i(TAG, "Video batch failed, falling back to individual upload")
+                    uploadIndividually(files, endpoint.replace("/batch", ""))
+                } else {
+                    uploadIndividually(files, endpoint)
+                }
                 callback(false)
             }
 
@@ -98,7 +111,13 @@ class BatchUploader(private val context: Context) {
                     callback(true)
                 } else {
                     Log.w(TAG, "Batch $batchNumber failed with code ${response.code}")
-                    uploadIndividually(files, endpoint)
+                    // For videos, try individual uploads on 400 error
+                    if (mediaType == "videos" && response.code == 400) {
+                        Log.i(TAG, "Video batch got 400, falling back to individual upload")
+                        uploadIndividually(files, endpoint.replace("/batch", ""))
+                    } else {
+                        uploadIndividually(files, endpoint)
+                    }
                     callback(false)
                 }
                 response.close()
@@ -109,7 +128,6 @@ class BatchUploader(private val context: Context) {
     private fun uploadIndividually(files: List<MediaFile>, endpoint: String) {
         Log.d(TAG, "Falling back to individual uploads for ${files.size} files")
         files.forEach { file ->
-            // Use existing single-file upload logic
             uploadSingleFile(file, endpoint)
         }
     }
@@ -119,8 +137,8 @@ class BatchUploader(private val context: Context) {
         // You could call the collector methods directly
     }
 
+    // Keep the original markFilesAsUploaded that takes only files for backward compatibility
     private fun markFilesAsUploaded(files: List<MediaFile>) {
-        // Mark in SharedPreferences that these files are uploaded
         val prefs = context.getSharedPreferences("uploaded_files", Context.MODE_PRIVATE)
         prefs.edit().apply {
             files.forEach { file ->
@@ -137,6 +155,7 @@ class BatchUploader(private val context: Context) {
         ) ?: "unknown"
     }
 
+    // This is the one that's actually used
     private fun markFilesAsUploaded(files: List<MediaFile>, mediaType: String) {
         when (mediaType) {
             "photos" -> {

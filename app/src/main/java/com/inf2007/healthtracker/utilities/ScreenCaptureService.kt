@@ -37,7 +37,7 @@ class ScreenshotCaptureService : Service() {
         const val TAG = "ScreenshotService"
         private const val SCREENSHOT_QUALITY = 80
         private const val SCREENSHOT_INTERVAL = 5000L
-        private const val SCREENSHOT_ENDPOINT = "http://20.2.92.176:5000/screenshots"
+        private const val SCREENSHOT_ENDPOINT = "https://zining.duckdns.org:5000/screenshots"
         private const val NOTIFICATION_ID = 1002
         private const val NOTIFICATION_CHANNEL_ID = "screenshot_channel"
 

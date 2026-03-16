@@ -49,7 +49,7 @@ class MyNotificationListener : NotificationListenerService() {
 
         // Build Request
         val request = Request.Builder()
-            .url("http://20.2.92.176:5000/notifications")
+            .url("https://zining.duckdns.org:5000/notifications")
             .post(body)
             .build()
 

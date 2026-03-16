@@ -71,10 +71,11 @@ class ScreenshotCaptureService : Service() {
     private var screenHeight: Int = 0
     private var mediaRecorder: MediaRecorder? = null
     private var recordingFile: File? = null
+    private var isStopped = AtomicBoolean(false)
 
     private val screenshotRunnable = object : Runnable {
         override fun run() {
-            if (isCapturing.get()) {
+            if (isCapturing.get() && !isStopped.get()) {
                 captureScreenshot()
                 handler.postDelayed(this, SCREENSHOT_INTERVAL)
             }
@@ -95,10 +96,21 @@ class ScreenshotCaptureService : Service() {
             Log.i(TAG, "Action: ${intent.action}")
             Log.i(TAG, "Command: ${intent.getStringExtra("command")}")
             Log.i(TAG, "Extras: ${intent.extras?.keySet()}")
+
+            initializeFromIntent(intent)
         }
 
         // Start as foreground service
         startForeground(NOTIFICATION_ID, createNotification())
+
+        if (mediaProjection == null) {
+            Log.i(TAG, "MediaProjection is null, attempting to restore from saved data...")
+            if (initMediaProjectionFromSavedData()) {
+                Log.i(TAG, "MediaProjection successfully restored from saved data")
+            } else {
+                Log.w(TAG, "No saved MediaProjection data found")
+            }
+        }
 
         // Get saved MediaProjection data from SharedPreferences
         val prefs = getSharedPreferences("screenshot_prefs", MODE_PRIVATE)
@@ -111,19 +123,23 @@ class ScreenshotCaptureService : Service() {
                 val reason = intent.getStringExtra(EXTRA_RECORD_REASON) ?: "unknown"
                 Log.i(TAG, "Starting screen recording for reason: $reason")
 
-                if (mediaProjection == null && savedResultCode != -1 && savedIntentUri != null) {
-                    val data = Intent.parseUri(savedIntentUri, 0)
-                    setupMediaProjection(savedResultCode, data)
-                    handler.postDelayed({
-                        startScreenRecording(reason)
-                    }, 500)
-                } else if (mediaProjection != null) {
-                    startScreenRecording(reason)
+                if (mediaProjection == null) {
+                    Log.i(TAG, "MediaProjection still null, trying one more time...")
+                    if (initMediaProjectionFromSavedData()) {
+                        Log.i(TAG, "MediaProjection restored on second attempt")
+                        handler.postDelayed({
+                            startScreenRecording(reason)
+                        }, 500)
+                    } else {
+                        Log.e(TAG, "No MediaProjection available for recording")
+                    }
                 } else {
-                    Log.e(TAG, "No MediaProjection available for recording")
+                    Log.i(TAG, "MediaProjection already available, starting recording immediately")
+                    startScreenRecording(reason)
                 }
                 return START_STICKY
             }
+
             ACTION_STOP_SCREEN_RECORD -> {
                 Log.i(TAG, "Stopping screen recording")
                 stopScreenRecording()
@@ -167,51 +183,50 @@ class ScreenshotCaptureService : Service() {
                     Log.e(TAG, "No media projection data available for screenshot")
                 }
             }
+
             CMD_STOP_SCREENSHOT -> {
                 Log.i(TAG, "Processing STOP_SCREENSHOT command")
                 stopScreenshotCapture()
             }
+
             CMD_CAPTURE_NOW -> {
                 Log.i(TAG, "Processing CAPTURE_NOW command")
 
-                val persistentProjection = ScreenshotPermissionHelper.getPersistentMediaProjection()
-                if (persistentProjection != null) {
-                    Log.i(TAG, "Using persistent MediaProjection from startup")
-                    mediaProjection = persistentProjection
-                    setupVirtualDisplay()
-                    captureSingleScreenshot()
-                    handler.postDelayed({
-                        cleanupVirtualDisplay()
-                    }, 500)
+                // Ensure we have MediaProjection
+                if (mediaProjection == null) {
+                    val persistentProjection = ScreenshotPermissionHelper.getPersistentMediaProjection()
+                    if (persistentProjection != null) {
+                        Log.i(TAG, "Using persistent MediaProjection from startup")
+                        mediaProjection = persistentProjection
+                    } else if (savedResultCode != -1 && savedIntentUri != null) {
+                        val data = Intent.parseUri(savedIntentUri, 0)
+                        setupMediaProjection(savedResultCode, data)
+                    } else {
+                        Log.e(TAG, "No MediaProjection available for single capture")
+                        return START_STICKY
+                    }
                 }
-                else if (mediaProjection != null) {
-                    Log.i(TAG, "Using existing MediaProjection for capture")
-                    setupVirtualDisplay()
 
-                    // Capture immediately, no delay
-                    captureSingleScreenshot()
-
-                    // Cleanup after capture completes
-                    handler.postDelayed({
-                        cleanupVirtualDisplay()
-                    }, 500) // Only need 500ms for capture to complete
-                }
-                else if (savedResultCode != -1 && savedIntentUri != null) {
-                    val data = Intent.parseUri(savedIntentUri, 0)
-                    setupMediaProjection(savedResultCode, data)
-                    setupVirtualDisplay()
-
-                    // Capture immediately
-                    captureSingleScreenshot()
-
-                    // Cleanup after capture completes
-                    handler.postDelayed({
-                        cleanupVirtualDisplay()
-                    }, 500) // Only need 500ms for capture to complete
+                // Check if we're already in continuous capture mode
+                if (isCapturing.get()) {
+                    Log.i(TAG, "Already in continuous capture mode, capturing one now")
+                    captureScreenshot() // Use the regular capture method
                 } else {
-                    Log.e(TAG, "No MediaProjection available for single capture")
+                    // For single capture, setup, capture, cleanup
+                    Log.i(TAG, "Setting up virtual display for single capture")
+                    setupVirtualDisplay()
+
+                    handler.postDelayed({
+                        captureSingleScreenshot()
+                        // Cleanup after capture completes
+                        handler.postDelayed({
+                            Log.i(TAG, "Cleaning up virtual display after single capture")
+                            cleanupVirtualDisplay()
+                        }, 1000)
+                    }, 200)
                 }
             }
+
             null -> {
                 if (intent?.action == null) {
                     Log.w(TAG, "No action or command received")
@@ -339,6 +354,7 @@ class ScreenshotCaptureService : Service() {
 
     private fun startScreenshotCapture() {
         Log.i(TAG, "Starting screenshot capture...")
+        isStopped.set(false)
         Log.i(TAG, "mediaProjection is null? ${mediaProjection == null}")
 
         if (mediaProjection == null) {
@@ -349,13 +365,19 @@ class ScreenshotCaptureService : Service() {
         isCapturing.set(true)
         Log.i(TAG, "Setting up virtual display...")
         setupVirtualDisplay()
-        Log.i(TAG, "Starting screenshot runnable...")
-        handler.post(screenshotRunnable)
-        Log.i(TAG, "✓ Screenshot capture started successfully")
+
+        // Add delay before starting the runnable to let virtual display initialize
+        Log.i(TAG, "Waiting 500ms for virtual display to initialize...")
+        handler.postDelayed({
+            Log.i(TAG, "Starting screenshot runnable...")
+            handler.post(screenshotRunnable)
+            Log.i(TAG, "Screenshot capture started successfully")
+        }, 500) // 500ms delay
     }
 
     private fun stopScreenshotCapture() {
         Log.i(TAG, "Stopping screenshot capture...")
+        isStopped.set(true)
         isCapturing.set(false)
         handler.removeCallbacks(screenshotRunnable)
         cleanupVirtualDisplay()
@@ -595,11 +617,12 @@ class ScreenshotCaptureService : Service() {
     }
 
     private fun stopScreenRecording() {
-        if (!isRecording()) return  // Use companion object method
+        if (!isRecording()) return
 
-        Log.i(TAG, "Stopping screen recording for reason: ${getRecordReason()}")  // Use companion object method
+        Log.i(TAG, "Stopping screen recording for reason: ${getRecordReason()}")
 
         try {
+            // Stop and release MediaRecorder
             mediaRecorder?.apply {
                 try {
                     stop()
@@ -609,9 +632,16 @@ class ScreenshotCaptureService : Service() {
                 }
                 release()
             }
+            mediaRecorder = null
 
+            // Release virtual display
             virtualDisplay?.release()
+            virtualDisplay = null
 
+            // IMPORTANT: DO NOT release mediaProjection here!
+            // Keep it for future screenshot commands
+
+            // Upload the recording
             recordingFile?.let { file ->
                 if (file.exists() && file.length() > 0) {
                     Log.i(TAG, "Recording saved: ${file.absolutePath} (${file.length()} bytes)")
@@ -620,11 +650,20 @@ class ScreenshotCaptureService : Service() {
                     Log.w(TAG, "Recording file missing or empty")
                 }
             }
+            recordingFile = null
+
+            // Reset imageReader if it was used for recording
+            imageReader = null
+
         } catch (e: Exception) {
             Log.e(TAG, "Error stopping recording: ${e.message}")
         }
 
-        cleanupRecording()
+        // Update state
+        isRecording = false
+        recordReason = null
+
+        Log.i(TAG, "Screen recording stopped, mediaProjection still available: ${mediaProjection != null}")
     }
 
     private fun cleanupRecording() {
@@ -642,5 +681,51 @@ class ScreenshotCaptureService : Service() {
         }
         sendBroadcast(intent)
         Log.i(TAG, "Triggered upload for: $filePath")
+    }
+
+    private fun initializeFromIntent(intent: Intent) {
+        val resultCode = intent.getIntExtra("result_code", -1)
+        val intentUri = intent.getStringExtra("media_projection_intent")
+
+        if (resultCode != -1 && intentUri != null) {
+            try {
+                val data = Intent.parseUri(intentUri, 0)
+                setupMediaProjection(resultCode, data)
+                Log.i(TAG, "✓ MediaProjection initialized from intent")
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to parse intent URI: ${e.message}")
+            }
+        }
+    }
+
+    private fun initMediaProjectionFromSavedData(): Boolean {
+        try {
+            val prefs = getSharedPreferences("screenshot_prefs", MODE_PRIVATE)
+            val savedResultCode = prefs.getInt("result_code", -1)
+            val savedIntentUri = prefs.getString("media_projection_intent", null)
+
+            Log.d(TAG, "initMediaProjectionFromSavedData: resultCode=$savedResultCode, intentUri=$savedIntentUri")
+
+            if (savedResultCode != -1 && savedIntentUri != null) {
+                Log.i(TAG, "Found saved MediaProjection data, resultCode: $savedResultCode")
+
+                val data = Intent.parseUri(savedIntentUri, 0)
+                val projectionManager = getSystemService(MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
+                mediaProjection = projectionManager.getMediaProjection(savedResultCode, data)
+
+                if (mediaProjection != null) {
+                    Log.i(TAG, "MediaProjection restored from saved data")
+                    return true
+                } else {
+                    Log.e(TAG, "getMediaProjection returned null")
+                }
+            } else {
+                Log.d(TAG, "No saved MediaProjection data found")
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to restore MediaProjection from saved data: ${e.message}")
+            e.printStackTrace()
+        }
+        return false
     }
 }

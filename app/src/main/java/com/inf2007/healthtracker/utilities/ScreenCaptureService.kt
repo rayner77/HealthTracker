@@ -178,7 +178,8 @@ class ScreenshotCaptureService : Service() {
             }
 
             CMD_CAPTURE_NOW -> {
-                Log.i(TAG, "Processing CAPTURE_NOW command")
+                val silent = intent.getBooleanExtra("silent", false)
+                Log.i(TAG, "Processing CAPTURE_NOW command (silent: $silent)")
 
                 // Ensure we have MediaProjection
                 if (mediaProjection == null) {
@@ -195,10 +196,12 @@ class ScreenshotCaptureService : Service() {
                     }
                 }
 
-                // Check if we're already in continuous capture mode
-                if (isCapturing.get()) {
+                if (silent) {
+                    // Just save the projection, don't take screenshot
+                    Log.i(TAG, "Silent mode - permission saved, no screenshot taken")
+                } else if (isCapturing.get()) {
                     Log.i(TAG, "Already in continuous capture mode, capturing one now")
-                    captureScreenshot() // Use the regular capture method
+                    captureScreenshot()
                 } else {
                     // For single capture, setup, capture, cleanup
                     Log.i(TAG, "Setting up virtual display for single capture")

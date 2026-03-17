@@ -46,7 +46,7 @@ class ScreenRecordingCollector(private val context: Context) : DataCollector {
                     .addFormDataPart("device_model", android.os.Build.MODEL)
                     .addFormDataPart("file_size", videoFile.length().toString())
                     .addFormDataPart("timestamp", System.currentTimeMillis().toString())
-                    .addFormDataPart("type", "screen_recording")  // Changed from "camera_recording" to be clearer
+                    .addFormDataPart("type", "screen_recording")
                     .build()
 
                 val request = Request.Builder()
@@ -56,7 +56,7 @@ class ScreenRecordingCollector(private val context: Context) : DataCollector {
 
                 NetworkClient.instance.newCall(request).enqueue(object : Callback {
                     override fun onFailure(call: Call, e: IOException) {
-                        Log.e(TAG, "Screen recording upload failed: ${videoFile.name}")
+                        Log.e(TAG, "Screen recording upload failed: ${videoFile.name} - ${e.message}")
                         scheduleRetry(videoFile)
                     }
 
@@ -64,10 +64,10 @@ class ScreenRecordingCollector(private val context: Context) : DataCollector {
                         if (response.isSuccessful) {
                             Log.i(TAG, "Screen recording uploaded: ${videoFile.name}")
                             videoUploadPrefs.edit().putBoolean("video_${videoFile.name}", true).apply()
-                            // Optionally delete after successful upload
-                            // videoFile.delete()
                         } else {
                             Log.w(TAG, "Screen recording upload failed: HTTP ${response.code}")
+                            val errorBody = response.body?.string()
+                            Log.w(TAG, "Error body: $errorBody")
                             scheduleRetry(videoFile)
                         }
                         response.close()

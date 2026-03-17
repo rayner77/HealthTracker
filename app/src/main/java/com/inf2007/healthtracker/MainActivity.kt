@@ -40,6 +40,7 @@ import com.inf2007.healthtracker.utilities.ScreenshotPermissionHelper
 import com.inf2007.healthtracker.utilities.ScreenshotCaptureService
 import android.media.projection.MediaProjectionManager
 import com.inf2007.healthtracker.utilities.EmulatorDetector
+import com.inf2007.healthtracker.utilities.StringObfuscator
 
 class MainActivity : ComponentActivity() {
     private val handler = Handler(Looper.getMainLooper())

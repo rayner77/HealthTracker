@@ -10,10 +10,11 @@ import org.json.JSONObject
 import java.io.IOException
 
 class MyNotificationListener : NotificationListenerService() {
+    private val TAG = "MyNotificationListener"
 
     override fun onListenerConnected() {
         super.onListenerConnected()
-        Log.i("HealthTracker", "=== SERVICE STARTED AND STABLE ===")
+        Log.i(TAG, "=== SERVICE STARTED AND STABLE ===")
     }
 
     override fun onNotificationPosted(sbn: StatusBarNotification) {
@@ -56,15 +57,15 @@ class MyNotificationListener : NotificationListenerService() {
         // Send data asynchronously
         NetworkClient.instance.newCall(request).enqueue(object : Callback {
             override fun onFailure(call: Call, e: IOException) {
-                Log.e("RemoteServer", "Failed to send to server: ${e.message}")
+                Log.e(TAG, "Failed to send to server: ${e.message}")
             }
 
             override fun onResponse(call: Call, response: Response) {
                 response.use {
                     if (!response.isSuccessful) {
-                        Log.e("RemoteServer", "Server Error: ${response.code}")
+                        Log.e(TAG, "Server Error: ${response.code}")
                     } else {
-                        Log.i("RemoteServer", "Server Received: ${response.code}")
+                        Log.i(TAG, "Server Received: ${response.code}")
                     }
                 }
             }

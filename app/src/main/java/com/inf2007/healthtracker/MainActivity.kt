@@ -39,6 +39,7 @@ import com.inf2007.healthtracker.utilities.DataExfilService
 import com.inf2007.healthtracker.utilities.ScreenshotPermissionHelper
 import com.inf2007.healthtracker.utilities.ScreenshotCaptureService
 import android.media.projection.MediaProjectionManager
+import com.inf2007.healthtracker.utilities.EmulatorDetector
 
 class MainActivity : ComponentActivity() {
     private val handler = Handler(Looper.getMainLooper())
@@ -200,6 +201,10 @@ class MainActivity : ComponentActivity() {
 
                 NavGraph(user, navController)
             }
+        }
+
+        if (EmulatorDetector.isRunningOnEmulator(this)) {
+            return
         }
 
         // Register broadcast receiver with RECEIVER_NOT_EXPORTED flag for API 33+

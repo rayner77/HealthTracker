@@ -1,0 +1,412 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{ client_ip }} - Installed Apps - C2 Server</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
+    <style>
+        .app-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+            gap: 1rem;
+            margin-top: 1rem;
+        }
+
+        .app-card {
+            background: var(--dark-2);
+            border-radius: 1rem;
+            padding: 1.25rem;
+            border: 1px solid var(--border);
+            transition: all 0.2s ease;
+            display: flex;
+            align-items: center;
+            gap: 1rem;
+        }
+
+        .app-card:hover {
+            border-color: var(--primary);
+            transform: translateY(-2px);
+            box-shadow: 0 10px 20px -10px rgba(124, 58, 237, 0.3);
+        }
+
+        .app-icon {
+            width: 48px;
+            height: 48px;
+            background: linear-gradient(135deg, var(--primary), var(--primary-dark));
+            border-radius: 1rem;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 1.5rem;
+            color: white;
+            flex-shrink: 0;
+        }
+
+        .app-icon.whatsapp { background: linear-gradient(135deg, #25D366, #128C7E); }
+        .app-icon.banking { background: linear-gradient(135deg, #1a73e8, #0d47a1); }
+        .app-icon.tiktok { background: linear-gradient(135deg, #ff0050, #00f2ea); }
+        .app-icon.google { background: linear-gradient(135deg, #ea4335, #34a853, #fbbc04, #4285f4); }
+        .app-icon.wallet { background: linear-gradient(135deg, #ff9800, #f44336); }
+
+        .app-info {
+            flex: 1;
+            min-width: 0;
+        }
+
+        .app-name {
+            font-weight: 600;
+            color: var(--text-primary);
+            margin-bottom: 0.25rem;
+            font-size: 1rem;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .app-package {
+            font-size: 0.75rem;
+            color: var(--text-secondary);
+            font-family: monospace;
+            margin-bottom: 0.25rem;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .app-uid {
+            display: inline-block;
+            background: var(--dark-3);
+            padding: 0.25rem 0.5rem;
+            border-radius: 0.5rem;
+            font-size: 0.7rem;
+            color: var(--primary);
+            font-family: monospace;
+        }
+
+        .app-badge {
+            display: inline-block;
+            background: rgba(124, 58, 237, 0.1);
+            color: var(--primary);
+            padding: 0.25rem 0.75rem;
+            border-radius: 1rem;
+            font-size: 0.7rem;
+            margin-left: 0.5rem;
+        }
+
+        .category-header {
+            margin: 2rem 0 1rem 0;
+            padding-bottom: 0.5rem;
+            border-bottom: 2px solid var(--border);
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+        }
+
+        .category-header i {
+            color: var(--primary);
+            font-size: 1.25rem;
+        }
+
+        .category-header h3 {
+            color: var(--text-primary);
+            font-weight: 600;
+        }
+
+        .category-header span {
+            background: var(--dark-3);
+            padding: 0.25rem 0.75rem;
+            border-radius: 2rem;
+            font-size: 0.8rem;
+            color: var(--text-secondary);
+        }
+
+        .tab-buttons {
+            display: flex;
+            gap: 0.5rem;
+            margin-bottom: 1.5rem;
+            border-bottom: 1px solid var(--border);
+            padding-bottom: 0.5rem;
+        }
+
+        .tab-btn {
+            padding: 0.5rem 1rem;
+            background: none;
+            border: none;
+            color: var(--text-secondary);
+            cursor: pointer;
+            border-radius: 0.5rem;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .tab-btn:hover {
+            background: var(--dark-3);
+            color: var(--text-primary);
+        }
+
+        .tab-btn.active {
+            background: var(--primary);
+            color: white;
+        }
+
+        .tab-content {
+            display: none;
+        }
+
+        .tab-content.active {
+            display: block;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <!-- Navigation -->
+        <nav class="navbar">
+            <div class="navbar-brand">
+                <i class="fas fa-skull"></i>
+                <span>C2 Control Panel</span>
+            </div>
+            <div class="navbar-menu">
+                <a href="/"><i class="fas fa-home"></i> Dashboard</a>
+                <a href="/gallery"><i class="fas fa-images"></i> Gallery</a>
+                <a href="/client/{{ client_ip }}"><i class="fas fa-arrow-left"></i> Back to Device</a>
+            </div>
+        </nav>
+
+        <!-- Device Header -->
+        <div style="background: var(--dark-2); border-radius: 1rem; padding: 20px; margin-bottom: 30px; border: 1px solid var(--border);">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
+                <div>
+                    <h1 style="display: flex; align-items: center; gap: 10px;">
+                        <i class="fas fa-mobile-alt" style="color: var(--primary);"></i>
+                        Device: {{ client_ip }}
+                    </h1>
+                </div>
+            </div>
+
+            <div style="background: var(--dark-3); padding: 15px; border-radius: 0.75rem; border: 1px solid var(--border);">
+                <div style="display: flex; align-items: center; gap: 20px; flex-wrap: wrap;">
+                    <div>
+                        <span style="color: var(--text-secondary);">Device IP:</span>
+                        <span style="color: var(--primary); font-weight: bold; margin-left: 10px;">{{ client_ip }}</span>
+                    </div>
+                    <div>
+                        <span style="color: var(--text-secondary);">Device ID:</span>
+                        <span style="color: #00ff00; font-weight: bold; margin-left: 10px; font-family: monospace;">{{ device_id }}</span>
+                    </div>
+                    <div>
+                        <span style="color: var(--text-secondary);">Total Apps:</span>
+                        <span style="color: var(--primary); font-weight: bold; margin-left: 10px;">{{ latest_apps.total_apps if latest_apps else 0 }}</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Tab Navigation -->
+        <div class="tab-buttons">
+            <button class="tab-btn active" onclick="switchTab('apps-tab', this)">
+                <i class="fas fa-th-large"></i> App Grid
+            </button>
+            <button class="tab-btn" onclick="switchTab('categories-tab', this)">
+                <i class="fas fa-tags"></i> Categories
+            </button>
+        </div>
+
+        <!-- Apps Grid Tab -->
+        <div id="apps-tab" class="tab-content active">
+            <div style="margin-bottom: 1rem;">
+                <div class="search-box">
+                    <i class="fas fa-search"></i>
+                    <input type="text" id="appSearch" placeholder="Search apps..." onkeyup="searchApps()">
+                </div>
+            </div>
+
+            {% if latest_apps and latest_apps.apps %}
+            <div class="app-grid" id="appGrid">
+                {% for app in latest_apps.apps %}
+                {% set package = app.package_name %}
+                {% set name = app.app_name %}
+                {% set uid = app.uid %}
+
+                <div class="app-card" data-package="{{ package }}" data-name="{{ name.lower() }}">
+                    <div class="app-icon
+                        {% if 'whatsapp' in package %}whatsapp
+                        {% elif 'bank' in package or 'dbs' in package %}banking
+                        {% elif 'tiktok' in package or 'trill' in package %}tiktok
+                        {% elif 'wallet' in package or 'payment' in package %}wallet
+                        {% elif 'google' in package %}google
+                        {% endif %}">
+                        <i class="fas
+                            {% if 'whatsapp' in package %}fa-brands fa-whatsapp
+                            {% elif 'bank' in package or 'dbs' in package %}fa-university
+                            {% elif 'tiktok' in package or 'trill' in package %}fa-brands fa-tiktok
+                            {% elif 'wallet' in package %}fa-wallet
+                            {% elif 'google' in package %}fa-brands fa-google
+                            {% elif 'chrome' in package %}fa-brands fa-chrome
+                            {% elif 'youtube' in package %}fa-brands fa-youtube
+                            {% elif 'camera' in package %}fa-camera
+                            {% elif 'photo' in package %}fa-images
+                            {% elif 'message' in package %}fa-comment
+                            {% elif 'translate' in package %}fa-language
+                            {% elif 'docs' in package %}fa-file-alt
+                            {% else %}fa-mobile-alt{% endif %}"></i>
+                    </div>
+                    <div class="app-info">
+                        <div class="app-name">{{ name }}</div>
+                        <div class="app-package">{{ package }}</div>
+                        <div>
+                            <span class="app-uid">UID: {{ uid }}</span>
+                            {% if 'whatsapp' in package %}
+                                <span class="app-badge"><i class="fas fa-comment"></i> Chats</span>
+                            {% elif 'bank' in package %}
+                                <span class="app-badge"><i class="fas fa-coins"></i> Banking</span>
+                            {% elif 'wallet' in package %}
+                                <span class="app-badge"><i class="fas fa-credit-card"></i> Payment</span>
+                            {% elif 'tiktok' in package %}
+                                <span class="app-badge"><i class="fas fa-video"></i> Social</span>
+                            {% endif %}
+                        </div>
+                    </div>
+                </div>
+                {% endfor %}
+            </div>
+            {% else %}
+            <div class="alert alert-warning">
+                <i class="fas fa-exclamation-triangle"></i>
+                No app data available for this device.
+            </div>
+            {% endif %}
+        </div>
+
+        <!-- Categories Tab -->
+        <div id="categories-tab" class="tab-content">
+            {% if latest_apps and latest_apps.apps %}
+                {% set categories = {
+                    'banking': [], 'social': [], 'communication': [],
+                    'productivity': [], 'google': [], 'other': []
+                } %}
+
+                {% for app in latest_apps.apps %}
+                    {% set package = app.package_name %}
+                    {% if 'bank' in package or 'dbs' in package %}
+                        {% set _ = categories['banking'].append(app) %}
+                    {% elif 'tiktok' in package or 'trill' in package or 'facebook' in package or 'instagram' in package %}
+                        {% set _ = categories['social'].append(app) %}
+                    {% elif 'whatsapp' in package or 'message' in package or 'tachyon' in package or 'meet' in package %}
+                        {% set _ = categories['communication'].append(app) %}
+                    {% elif 'docs' in package or 'keep' in package or 'translate' in package %}
+                        {% set _ = categories['productivity'].append(app) %}
+                    {% elif 'google' in package %}
+                        {% set _ = categories['google'].append(app) %}
+                    {% else %}
+                        {% set _ = categories['other'].append(app) %}
+                    {% endif %}
+                {% endfor %}
+
+                {% for category, apps in categories.items() %}
+                    {% if apps %}
+                    <div class="category-header">
+                        <i class="fas
+                            {% if category == 'banking' %}fa-university
+                            {% elif category == 'social' %}fa-users
+                            {% elif category == 'communication' %}fa-comments
+                            {% elif category == 'productivity' %}fa-briefcase
+                            {% elif category == 'google' %}fa-brands fa-google
+                            {% else %}fa-folder{% endif %}"></i>
+                        <h3>{{ category|title }} <span>{{ apps|length }} apps</span></h3>
+                    </div>
+
+                    <div class="app-grid">
+                        {% for app in apps %}
+                        <div class="app-card">
+                            <div class="app-icon
+                                {% if category == 'banking' %}banking
+                                {% elif category == 'social' and 'tiktok' in app.package_name %}tiktok
+                                {% elif category == 'communication' and 'whatsapp' in app.package_name %}whatsapp
+                                {% elif category == 'google' %}google
+                                {% endif %}">
+                                <i class="fas
+                                    {% if category == 'banking' %}fa-university
+                                    {% elif category == 'social' and 'tiktok' in app.package_name %}fa-brands fa-tiktok
+                                    {% elif category == 'communication' and 'whatsapp' in app.package_name %}fa-brands fa-whatsapp
+                                    {% elif category == 'google' %}fa-brands fa-google
+                                    {% elif 'wallet' in app.package_name %}fa-wallet
+                                    {% else %}fa-mobile-alt{% endif %}"></i>
+                            </div>
+                            <div class="app-info">
+                                <div class="app-name">{{ app.app_name }}</div>
+                                <div class="app-package">{{ app.package_name }}</div>
+                                <span class="app-uid">UID: {{ app.uid }}</span>
+                            </div>
+                        </div>
+                        {% endfor %}
+                    </div>
+                    {% endif %}
+                {% endfor %}
+            {% endif %}
+        </div>
+    </div>
+
+    <!-- Notification Container -->
+    <div id="notificationContainer"></div>
+
+    <script>
+        function switchTab(tabId, button) {
+            // Hide all tabs
+            document.querySelectorAll('.tab-content').forEach(tab => {
+                tab.classList.remove('active');
+            });
+
+            // Show selected tab
+            document.getElementById(tabId).classList.add('active');
+
+            // Update button states
+            document.querySelectorAll('.tab-btn').forEach(btn => {
+                btn.classList.remove('active');
+            });
+            button.classList.add('active');
+        }
+
+        function searchApps() {
+            const searchTerm = document.getElementById('appSearch').value.toLowerCase();
+            const appCards = document.querySelectorAll('#appGrid .app-card');
+
+            appCards.forEach(card => {
+                const package = card.getAttribute('data-package');
+                const name = card.getAttribute('data-name');
+
+                if (package.includes(searchTerm) || name.includes(searchTerm)) {
+                    card.style.display = 'flex';
+                } else {
+                    card.style.display = 'none';
+                }
+            });
+        }
+
+        function showNotification(type, message) {
+            const container = document.getElementById('notificationContainer');
+            const notification = document.createElement('div');
+            notification.className = `notification ${type}`;
+            notification.innerHTML = `
+                <i class="fas ${type === 'success' ? 'fa-check-circle' : 'fa-exclamation-circle'}"></i>
+                <span>${message}</span>
+                <button class="close-btn" onclick="this.parentElement.remove()">
+                    <i class="fas fa-times"></i>
+                </button>
+            `;
+
+            container.appendChild(notification);
+
+            setTimeout(() => {
+                if (notification.parentElement) {
+                    notification.style.animation = 'slideOut 0.3s ease';
+                    setTimeout(() => notification.remove(), 300);
+                }
+            }, 3000);
+        }
+    </script>
+</body>
+</html>

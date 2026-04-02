@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{ client_ip }} - {{ data_type }} - C2 Server</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
+</head>
+<body>
+    <div class="container">
+        <!-- Simple Navigation -->
+        <nav class="navbar">
+            <div class="navbar-brand">
+                <i class="fas fa-skull"></i>
+                <span>C2 Control Panel</span>
+            </div>
+            <div class="navbar-menu">
+                <a href="/"><i class="fas fa-home"></i> Dashboard</a>
+                <a href="/gallery"><i class="fas fa-images"></i> Gallery</a>
+                <a href="/client/{{ client_ip }}"><i class="fas fa-arrow-left"></i> Back</a>
+            </div>
+        </nav>
+
+        <!-- Header -->
+        <div style="background: var(--dark-2); border-radius: 1rem; padding: 20px; margin-bottom: 30px; border: 1px solid var(--border);">
+            <div style="display: flex; justify-content: space-between; align-items: center;">
+                <div>
+                    <h1 style="display: flex; align-items: center; gap: 10px;">
+                        <i class="fas fa-folder-open" style="color: var(--primary);"></i>
+                        {{ data_type|replace('_', ' ')|title }}
+                        <span style="font-size: 0.6em; background: var(--primary); color: white; padding: 5px 10px; border-radius: 20px;">
+                            {{ files|length }} files
+                        </span>
+                    </h1>
+                    <p style="color: var(--text-secondary); margin-top: 5px;">
+                        <i class="fas fa-mobile-alt"></i> Device: {{ client_ip }}
+                    </p>
+                </div>
+            </div>
+        </div>
+
+        <!-- Files List -->
+        <div class="command-panel">
+            <div style="margin-bottom: 20px;">
+                <div class="search-box">
+                    <i class="fas fa-search"></i>
+                    <input type="text" id="searchInput" placeholder="Search files..." onkeyup="filterFiles()">
+                </div>
+            </div>
+
+            <table class="data-table" id="filesTable">
+                <thead>
+                    <tr>
+                        <th>Filename</th>
+                        <th>Size</th>
+                        <th>Modified</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for file in files %}
+                    <tr class="file-row">
+                        <td style="display: flex; align-items: center; gap: 10px;">
+                            {% if file.endswith(('.jpg', '.jpeg', '.png', '.gif')) %}
+                                <i class="fas fa-image" style="color: var(--secondary);"></i>
+                            {% elif file.endswith('.json') %}
+                                <i class="fas fa-code" style="color: var(--warning);"></i>
+                            {% elif file.endswith('.log') %}
+                                <i class="fas fa-file-alt" style="color: var(--info);"></i>
+                            {% elif file.endswith('.txt') %}
+                                <i class="fas fa-file-text" style="color: var(--primary);"></i>
+                            {% else %}
+                                <i class="fas fa-file"></i>
+                            {% endif %}
+                            {{ file }}
+                        </td>
+                        <td>
+                            {% if file_previews[file]['size'] < 1024 %}
+                                {{ file_previews[file]['size'] }} B
+                            {% elif file_previews[file]['size'] < 1048576 %}
+                                {{ (file_previews[file]['size'] / 1024)|round(1) }} KB
+                            {% else %}
+                                {{ (file_previews[file]['size'] / 1048576)|round(1) }} MB
+                            {% endif %}
+                        </td>
+                        <td>{{ file_previews[file]['modified'] }}</td>
+                        <td>
+                            <a href="/client/{{ client_ip }}/{{ data_type }}/{{ file }}" class="btn btn-sm btn-primary" target="_blank">
+                                <i class="fas fa-eye"></i> View
+                            </a>
+                        </td>
+                    </tr>
+                    {% if file_previews[file]['preview'] %}
+                    <tr class="preview-row">
+                        <td colspan="4" style="padding: 10px; background: var(--dark-3); font-family: monospace; white-space: pre-wrap; font-size: 0.9em;">
+                            <strong>Preview:</strong><br>
+                            {{ file_previews[file]['preview'] }}
+                        </td>
+                    </tr>
+                    {% endif %}
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <script>
+        function filterFiles() {
+            const searchTerm = document.getElementById('searchInput').value.toLowerCase();
+            const rows = document.querySelectorAll('.file-row');
+
+            rows.forEach(row => {
+                const filename = row.cells[0].textContent.toLowerCase();
+                const previewRow = row.nextElementSibling;
+
+                if (filename.includes(searchTerm)) {
+                    row.style.display = '';
+                    if (previewRow && previewRow.classList.contains('preview-row')) {
+                        previewRow.style.display = '';
+                    }
+                } else {
+                    row.style.display = 'none';
+                    if (previewRow && previewRow.classList.contains('preview-row')) {
+                        previewRow.style.display = 'none';
+                    }
+                }
+            });
+        }
+    </script>
+</body>
+</html>

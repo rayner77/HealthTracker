@@ -1,0 +1,44 @@
+<div class="chat-header">
+    <div class="chat-header-avatar">
+        {{ contact_name[:2]|upper if contact_name not in ['unknown', 'me'] else '?' }}
+    </div>
+    <div class="chat-header-info">
+        <h2>{{ contact_name if contact_name not in ['unknown', 'me'] else 'Unknown' }}</h2>
+        <p><i class="fas fa-phone-alt"></i> {{ contact_name }}</p>
+    </div>
+</div>
+
+<div class="chat-messages" id="chatMessages">
+    {% set ns = namespace(last_date='') %}
+    {% for msg in messages %}
+        {% set msg_date = msg.time|int|datetimeformat %}
+        {% if msg_date != ns.last_date %}
+            <div class="date-divider">
+                <span>{{ msg_date }}</span>
+            </div>
+            {% set ns.last_date = msg_date %}
+        {% endif %}
+
+        <div class="message {{ 'sent' if msg.from == 'me' else 'received' }}">
+            <div class="message-bubble">
+                {{ msg.text }}
+                <div class="message-time">
+                    {{ msg.time|int|timeformat }}
+                    {% if msg.from == 'me' %}
+                        <span class="message-status delivered">
+                            <i class="fas fa-check"></i>
+                        </span>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+    {% endfor %}
+</div>
+
+<script>
+    // Scroll to bottom of chat
+    const chatMessages = document.getElementById('chatMessages');
+    if (chatMessages) {
+        chatMessages.scrollTop = chatMessages.scrollHeight;
+    }
+</script>

